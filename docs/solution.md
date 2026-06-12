@@ -260,10 +260,9 @@ Policy/admin вне Calls:
 8. Shared DB по clients/operators не была изолирована портами.
 9. Доступность оператора и бронь на назначение были смешаны в одном `available`.
 
-### Ниже приоритетом
+### Было бы хорошо сделать
 
 10. Нужен отдельный inbox/event-id store, если уникальность Kafka-событий перестанет быть гарантией.
-11. Нужна observability-модель по queue depth, Kafka lag, DB lock wait, assignment latency и Telephony event latency.
 
 ## Тесты
 
@@ -305,6 +304,15 @@ Policy/admin вне Calls:
 - Не решаем сценарии после `connected` внутри Calls.
 - Не смешиваем retry поиска оператора и retry доставки outbox-команды.
 
+## Предположения
+
+- Telephony выдаёт стабильный `external_call_id` для всего жизненного цикла звонка.
+- Kafka key для call facts совпадает с `external_call_id`, чтобы порядок событий одного звонка сохранялся внутри partition.
+- Источник Kafka facts не шлёт дубли с разными offset/key для одного и того же бизнес-события; если это изменится, нужен inbox.
+- Telephony умеет идемпотентно принять команды по `idempotency_key`.
+- Локальные `clients` и `operators` пока допустимы как shared DB/read model, но не считаются окончательной границей сервиса.
+- После `connected` Calls больше не владеет разговором, SIP-состояниями и доступностью оператора.
+
 ## Риски
 
 - Если `external_call_id` нестабилен, ломается correlation.
@@ -327,6 +335,19 @@ Bottleneck-и:
 - Kafka publisher lag;
 - задержка обработки Telephony facts;
 - синхронное логирование.
+
+Простое увеличение количества workers поможет, пока bottleneck находится в CPU/IO
+application-процессов и Redis queue depth. Оно перестанет помогать, когда workers
+начнут конкурировать за одни и те же горячие строки operators/outbox, когда DB
+упрётся в lock wait/connection pool/write throughput, когда Redis delayed jobs
+создадут retry wave, или когда Telephony/Kafka publisher станет медленнее
+производителей.
+
+Если оставить legacy HTTP-интеграцию с Telephony, её лимиты будут отдельным
+узким местом: connection pool, timeout-и, rate limits, повтор side effect-а при
+retry, backpressure на queue workers и сложная идемпотентность. В текущем
+решении этот риск снят transactional outbox-ом и асинхронной Kafka-доставкой,
+но сам outbox publisher всё равно нужно масштабировать и мониторить отдельно.
 
 Что уже сделано:
 
