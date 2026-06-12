@@ -5,7 +5,7 @@ TEST_ENV := APP_ENV=testing APP_MAINTENANCE_DRIVER=file BCRYPT_ROUNDS=4 LOG_CHAN
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui
+.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui
 
 help:
 	@printf "%s\n" "Available targets:"
@@ -32,6 +32,9 @@ help:
 	@printf "  %-18s %s\n" "metrics-snapshot" "Record operational metrics snapshot once in Sail"
 	@printf "  %-18s %s\n" "kafka-consume" "Consume Kafka JSONL records from stdin in Sail, pass TOPIC=name"
 	@printf "  %-18s %s\n" "load-jsonl" "Generate incoming-call JSONL and consume locally, pass COUNT=1000"
+	@printf "  %-18s %s\n" "load-smoke" "Run smoke JSONL load profile in Sail"
+	@printf "  %-18s %s\n" "load-stress-large" "Run large stress JSONL profile in Sail"
+	@printf "  %-18s %s\n" "load-soak-large" "Run large soak JSONL profile in Sail"
 	@printf "  %-18s %s\n" "production-build" "Build production image locally"
 	@printf "  %-18s %s\n" "dead-letter-list" "List unresolved DLQ records in Sail"
 	@printf "  %-18s %s\n" "dead-letter-prune" "Prune resolved DLQ records in Sail"
@@ -113,6 +116,15 @@ kafka-consume:
 
 load-jsonl:
 	php tools/load/generate-incoming-calls-jsonl.php $${COUNT:-1000} local | $(ARTISAN) calls:kafka:consume incoming-calls --limit=$${COUNT:-1000} --timeout-ms=5000
+
+load-smoke:
+	$(SAIL) bash -lc 'LOAD_PROFILE=smoke bash tools/load/run-jsonl-load.sh'
+
+load-stress-large:
+	$(SAIL) bash -lc 'LOAD_PROFILE=stress-large bash tools/load/run-jsonl-load.sh'
+
+load-soak-large:
+	$(SAIL) bash -lc 'LOAD_PROFILE=soak-large bash tools/load/run-jsonl-load.sh'
 
 production-build:
 	docker build -f docker/production/Dockerfile -t calls:production .

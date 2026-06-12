@@ -1,0 +1,205 @@
+name: Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Preset profile. Use custom to override with fields below.
+        required: true
+        type: choice
+        default: stress-large
+        options:
+          - smoke
+          - stress-large
+          - soak-large
+          - custom
+      mode:
+        description: Custom mode, used only when profile=custom.
+        required: true
+        type: choice
+        default: stress
+        options:
+          - stress
+          - soak
+      count:
+        description: Custom total messages for stress mode.
+        required: true
+        type: number
+        default: 250000
+      duration_seconds:
+        description: Custom duration for soak mode.
+        required: true
+        type: number
+        default: 10800
+      rate_per_second:
+        description: Custom target producer rate. Set 0 for unlimited.
+        required: true
+        type: number
+        default: 0
+      batch_size:
+        description: Custom JSONL batch size per consumer command.
+        required: true
+        type: number
+        default: 5000
+      workers:
+        description: Custom number of calls queue workers.
+        required: true
+        type: number
+        default: 16
+      retry_workers:
+        description: Custom number of calls-retry queue workers.
+        required: true
+        type: number
+        default: 2
+      outbox_publishers:
+        description: Custom number of fake Telephony outbox publishers.
+        required: true
+        type: number
+        default: 4
+      operators:
+        description: Custom operators prepared for the load dataset.
+        required: true
+        type: number
+        default: 300000
+      drain_timeout_seconds:
+        description: Custom drain timeout after producing stops.
+        required: true
+        type: number
+        default: 900
+      snapshot_interval_seconds:
+        description: Periodic snapshot interval. Set 0 to disable.
+        required: true
+        type: number
+        default: 60
+      runner:
+        description: Runner label. Use self-hosted for very large/prolonged tests.
+        required: true
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - self-hosted
+      timeout_minutes:
+        description: Job timeout.
+        required: true
+        type: number
+        default: 360
+
+concurrency:
+  group: load-test-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  jsonl-load:
+    name: JSONL ${{ inputs.profile }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: calls
+          POSTGRES_USER: sail
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -q -d calls -U sail"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      APP_ENV: testing
+      APP_DEBUG: 'false'
+      LOG_CHANNEL: stack
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: calls
+      DB_USERNAME: sail
+      DB_PASSWORD: password
+      QUEUE_CONNECTION: redis
+      CACHE_STORE: redis
+      SESSION_DRIVER: array
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      KAFKA_CONSUMER_ADAPTER: jsonl
+      KAFKA_PRODUCER_ADAPTER: console
+      KAFKA_CONSOLE_PRODUCER_BINARY: ${{ github.workspace }}/tools/load/fake-kafka-console-producer.sh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_pgsql, redis
+          coverage: none
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare Laravel
+        run: |
+          cp .env.example .env
+          php artisan key:generate --ansi
+          php artisan migrate --force
+
+      - name: Run load profile
+        env:
+          LOAD_PROFILE: ${{ inputs.profile }}
+          CUSTOM_LOAD_MODE: ${{ inputs.mode }}
+          CUSTOM_LOAD_COUNT: ${{ inputs.count }}
+          CUSTOM_LOAD_DURATION_SECONDS: ${{ inputs.duration_seconds }}
+          CUSTOM_LOAD_RATE_PER_SECOND: ${{ inputs.rate_per_second }}
+          CUSTOM_LOAD_BATCH_SIZE: ${{ inputs.batch_size }}
+          CUSTOM_LOAD_WORKERS: ${{ inputs.workers }}
+          CUSTOM_LOAD_RETRY_WORKERS: ${{ inputs.retry_workers }}
+          CUSTOM_LOAD_OUTBOX_PUBLISHERS: ${{ inputs.outbox_publishers }}
+          CUSTOM_LOAD_OPERATORS: ${{ inputs.operators }}
+          CUSTOM_LOAD_DRAIN_TIMEOUT_SECONDS: ${{ inputs.drain_timeout_seconds }}
+          CUSTOM_LOAD_SNAPSHOT_INTERVAL_SECONDS: ${{ inputs.snapshot_interval_seconds }}
+          LOAD_FAKE_TELEPHONY_PRODUCER: '1'
+          LOAD_FAIL_ON_DLQ: '1'
+        run: |
+          if [ "${LOAD_PROFILE}" = "custom" ]; then
+            export LOAD_MODE="${CUSTOM_LOAD_MODE}"
+            export LOAD_COUNT="${CUSTOM_LOAD_COUNT}"
+            export LOAD_DURATION_SECONDS="${CUSTOM_LOAD_DURATION_SECONDS}"
+            export LOAD_RATE_PER_SECOND="${CUSTOM_LOAD_RATE_PER_SECOND}"
+            export LOAD_BATCH_SIZE="${CUSTOM_LOAD_BATCH_SIZE}"
+            export LOAD_WORKERS="${CUSTOM_LOAD_WORKERS}"
+            export LOAD_RETRY_WORKERS="${CUSTOM_LOAD_RETRY_WORKERS}"
+            export LOAD_OUTBOX_PUBLISHERS="${CUSTOM_LOAD_OUTBOX_PUBLISHERS}"
+            export LOAD_OPERATORS="${CUSTOM_LOAD_OPERATORS}"
+            export LOAD_DRAIN_TIMEOUT_SECONDS="${CUSTOM_LOAD_DRAIN_TIMEOUT_SECONDS}"
+            export LOAD_SNAPSHOT_INTERVAL_SECONDS="${CUSTOM_LOAD_SNAPSHOT_INTERVAL_SECONDS}"
+          fi
+
+          bash tools/load/run-jsonl-load.sh
+
+      - name: Upload load report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-report-${{ inputs.profile }}-${{ github.run_id }}
+          path: storage/load-reports/
+          if-no-files-found: warn
