@@ -176,6 +176,46 @@ final class ProcessIncomingCallJobTest extends TestCase
         $this->assertSame([], $retryQueue->retries);
     }
 
+    public function test_it_does_not_search_or_assign_operator_for_hung_up_call(): void
+    {
+        $retryQueue = new FakeCallProcessingRetryQueue;
+        $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+
+        $client = Client::query()->create(['phone' => '+15550000008']);
+        $operator = Operator::query()->create([
+            'name' => 'Operator 1',
+            'available' => true,
+            'afk' => false,
+            'last_call_at' => now()->subHour(),
+        ]);
+        $call = $this->createCall([
+            'external_call_id' => 'asterisk-linkedid-2008',
+            'phone' => '+15550000008',
+            'status' => 'missed',
+        ]);
+
+        $this->handleJob($call);
+
+        $this->assertDatabaseHas('calls', [
+            'id' => $call->id,
+            'client_id' => null,
+            'operator_id' => null,
+            'status' => 'missed',
+            'operator_search_attempts' => 0,
+        ]);
+        $this->assertDatabaseHas('operators', [
+            'id' => $operator->id,
+            'available' => true,
+            'reserved_call_id' => null,
+        ]);
+        $this->assertDatabaseMissing('calls', [
+            'id' => $call->id,
+            'client_id' => $client->id,
+        ]);
+        $this->assertDatabaseCount('telephony_outbox', 0);
+        $this->assertSame([], $retryQueue->retries);
+    }
+
     public function test_it_marks_call_waiting_and_retries_later_when_no_operator_is_available_and_attempts_remain(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
