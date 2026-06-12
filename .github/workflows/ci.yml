@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      APP_MAINTENANCE_DRIVER: file
+      BCRYPT_ROUNDS: 4
+      LOG_CHANNEL: 'null'
+      BROADCAST_CONNECTION: 'null'
+      CACHE_STORE: array
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ':memory:'
+      DB_URL: ''
+      MAIL_MAILER: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      PULSE_ENABLED: 'false'
+      TELESCOPE_ENABLED: 'false'
+      NIGHTWATCH_ENABLED: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_sqlite, pdo_pgsql, redis
+          coverage: none
+          tools: composer:v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare Laravel
+        run: |
+          cp .env.example .env
+          php artisan config:clear --ansi
+
+      - name: Validate Composer metadata
+        run: composer validate --strict --no-check-publish
+
+      - name: Check changed PHP style
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            base="${PR_BASE_SHA}"
+          else
+            base="${BEFORE_SHA}"
+          fi
+
+          if [ -z "${base}" ] || printf '%s' "${base}" | grep -Eq '^0+$'; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMRT "${base}" HEAD -- '*.php')
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No changed PHP files to check."
+            exit 0
+          fi
+
+          ./vendor/bin/pint --test "${files[@]}"
+
+      - name: Run PHPStan
+        run: composer phpstan
+
+      - name: Run PHPUnit
+        run: php artisan test
+
+      - name: Install frontend dependencies
+        run: npm install --ignore-scripts
+
+      - name: Build frontend assets
+        run: npm run build

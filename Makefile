@@ -1,6 +1,7 @@
 SAIL := ./vendor/bin/sail
 ARTISAN := php artisan
 COMPOSER := composer
+TEST_ENV := APP_ENV=testing APP_MAINTENANCE_DRIVER=file BCRYPT_ROUNDS=4 LOG_CHANNEL=null BROADCAST_CONNECTION=null CACHE_STORE=array DB_CONNECTION=sqlite DB_DATABASE=:memory: DB_URL= MAIL_MAILER=array QUEUE_CONNECTION=sync SESSION_DRIVER=array PULSE_ENABLED=false TELESCOPE_ENABLED=false NIGHTWATCH_ENABLED=false
 
 .DEFAULT_GOAL := help
 
@@ -69,7 +70,7 @@ fresh:
 	$(SAIL) artisan migrate:fresh --seed
 
 test:
-	$(ARTISAN) test
+	$(TEST_ENV) $(ARTISAN) test
 
 phpstan:
 	$(COMPOSER) phpstan
@@ -83,7 +84,7 @@ validate-local:
 	docker compose config --quiet
 	./vendor/bin/pint --dirty --test
 	$(COMPOSER) phpstan
-	$(ARTISAN) test
+	$(TEST_ENV) $(ARTISAN) test
 	$(COMPOSER) validate --strict --no-check-publish
 
 queue:
