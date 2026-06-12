@@ -1,0 +1,26 @@
+@startuml
+title 4. Публикация telephony outbox
+
+skinparam sequenceMessageAlign center
+
+actor "Планировщик" as Scheduler
+participant "Публикатор outbox" as Publisher
+database Outbox
+queue Kafka
+
+Scheduler -> Publisher: calls:telephony-outbox:publish
+Publisher -> Outbox: забрать ожидающие записи\nс canceled_at is null
+
+loop каждая команда
+    Publisher -> Kafka: опубликовать сообщение с ключом\nkey = external_call_id
+
+    alt опубликовано
+        Publisher -> Outbox: status = published
+    else ошибка, попытки остались
+        Publisher -> Outbox: status = pending\nследующая попытка позже
+    else ошибка, максимум попыток
+        Publisher -> Outbox: status = failed
+    end
+end
+
+@enduml

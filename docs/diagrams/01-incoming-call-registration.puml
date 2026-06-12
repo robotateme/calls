@@ -1,0 +1,24 @@
+@startuml
+title 1. Регистрация входящего звонка
+
+skinparam sequenceMessageAlign center
+
+actor "Телефония" as Telephony
+queue Kafka
+participant "Calls-сервис" as Calls
+database "БД" as DB
+queue Redis
+
+Telephony -> Kafka: входящий звонок
+Kafka -> Calls: прочитать событие
+Calls -> DB: создать call\nили найти по external_call_id
+
+alt новый звонок
+    Calls -> Redis: поставить ProcessIncomingCallJob
+else дубль
+    Calls -> Calls: ничего не менять
+end
+
+Calls -> Kafka: зафиксировать offset
+
+@enduml
