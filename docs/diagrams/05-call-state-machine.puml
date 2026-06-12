@@ -1,0 +1,68 @@
+@startuml
+title 5. Машина состояний звонка
+
+skinparam state {
+    BackgroundColor #FFFFFF
+    BorderColor #2F3A4A
+    ArrowColor #2F3A4A
+}
+
+top to bottom direction
+hide empty description
+
+state "До соединения" as before_connected {
+    state "новый\n(new)" as new
+    state "ожидает повтор\n(waiting)" as waiting
+    state "запрошено назначение\n(assignment_requested)" as assignment_requested
+    state "звоним оператору\n(operator_ringing)" as operator_ringing
+
+    [*] --> new : входящий звонок
+
+    new --> assignment_requested : оператор найден
+    new --> waiting : оператора нет,\nпопытки остались
+
+    waiting --> assignment_requested : новая попытка,\nоператор найден
+    waiting --> waiting : оператора нет,\nпопытки остались
+
+    assignment_requested --> operator_ringing : телефония начала\nзвонить оператору
+    assignment_requested --> waiting : оператор не ответил,\nпопытки остались
+    operator_ringing --> waiting : оператор не ответил,\nпопытки остались
+}
+
+state "соединён\n(connected)" as connected
+state "выбор финального статуса\nпо правилу телефонии" as choose_final <<choice>>
+state "пропущен\n(missed)" as missed
+state "нужен обратный звонок\n(callback_missed)" as callback_missed
+state "сброшен на повтор\n(hangup_on_retry)" as hangup_on_retry
+
+operator_ringing --> connected : соединение установлено
+before_connected --> choose_final : сброс до соединения\nили попытки закончились
+
+connected --> [*] : Calls завершил работу\nи освободил reservation
+
+choose_final --> missed : оставить пропущенным
+choose_final --> callback_missed : нужен обратный звонок
+choose_final --> hangup_on_retry : сбросить поиск
+
+missed --> [*]
+callback_missed --> [*]
+hangup_on_retry --> [*]
+
+note right of choose_final
+  Финальный статус выбирает правило,
+  которое пришло от телефонии:
+  missed, callback_missed или hangup_on_retry.
+end note
+
+note right of before_connected
+  До connected Calls ещё может
+  отменить ожидающую outbox-команду.
+end note
+
+note right of connected
+  После connected Calls не моделирует разговор:
+  кто положил трубку, обрыв связи и завершение
+  принадлежат телефонии или call-клиенту.
+end note
+
+@enduml

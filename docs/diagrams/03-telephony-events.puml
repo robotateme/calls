@@ -1,0 +1,41 @@
+@startuml
+title 3. События от телефонии
+
+skinparam sequenceMessageAlign center
+
+actor "Телефония" as Telephony
+queue Kafka
+participant "Calls-сервис" as Calls
+database "БД" as DB
+database Outbox
+queue Redis
+
+Telephony -> Kafka: факт телефонии
+Kafka -> Calls: прочитать событие
+
+alt оператору начали звонить
+    Calls -> DB: assignment_requested -> operator_ringing
+else соединение установлено
+    Calls -> DB: operator_ringing -> connected
+    Calls -> DB: освободить reservation оператора
+else оператор не ответил / обрыв до соединения
+    Calls -> DB: освободить оператора
+    alt попытки остались
+        Calls -> DB: статус waiting
+        Calls -> Outbox: команда о назначенном повторе\n(operator_search_retry_scheduled)
+        Calls -> Redis: повторить позже
+    else попытки закончились
+        Calls -> DB: финальный статус по правилу
+        Calls -> Outbox: operator_search_exhausted
+    end
+else событие после соединения
+    Calls -> DB: не менять статус call
+    Calls -> DB: audit/log при необходимости
+else сброс до connected
+    Calls -> DB: финальный статус по правилу
+    Calls -> Outbox: отменить ожидающее назначение\nили создать assignment_canceled
+end
+
+Calls -> Kafka: зафиксировать offset
+
+@enduml
