@@ -95,6 +95,7 @@ Kafka message contracts, topics, keys и idempotency описаны отдель
 - `CallProcessingQueue` ставит `ProcessIncomingCallJob`; job делегирует работу в `ProcessIncomingCallHandler`.
 - Входящий звонок и повтор используют один use case поиска оператора.
 - Правила повторов поиска оператора приходят от Telephony/Kafka и сохраняются на звонке: max attempts, retry delay seconds, hangup policy.
+- Перед поиском оператора и перед фиксацией assignment handler проверяет, что call всё ещё `new` или `waiting`. Поздний job после `hangup` не должен резервировать оператора и писать outbox.
 - Если оператора нет и попытки остались, call переходит в `waiting`, в `telephony_outbox` пишется `operator_search_retry_scheduled`, `CallProcessingRetryQueue` ставит новый `ProcessIncomingCallJob` в `calls-retry` с заданной задержкой.
 - Если попытки исчерпаны, в `telephony_outbox` пишется `operator_search_exhausted`, финальный статус выбирается правилом.
 - Если оператор найден, доступен, не AFK и не имеет активной reservation, call переходит в `assignment_requested`, в `operators.reserved_call_id` пишется id call, в `telephony_outbox` пишется `call_assignment_requested`.
@@ -125,7 +126,7 @@ Kafka message contracts, topics, keys и idempotency описаны отдель
 Доменный объект `Domain\Calls\Call` владеет решением по переходам:
 
 - `recordFailedOperatorSearchAttempt()` решает: поставить `waiting` и вернуть retry outcome или закрыть call финальным статусом;
-- `recordSuccessfulOperatorSearchAttempt()` фиксирует попытку и переводит call в `assignment_requested`;
+- `recordSuccessfulOperatorSearchAttempt()` фиксирует попытку и переводит call в `assignment_requested` только если call ещё processable;
 - `failPendingOperatorAssignment()` решает: повторить поиск или завершить поиск по правилу;
 - application handlers не проверяют attempts и не выбирают финальный статус напрямую, а исполняют side effects по domain outcome.
 
@@ -157,6 +158,7 @@ Kafka message contracts, topics, keys и idempotency описаны отдель
 | Lock wait при большом числе workers | Горячие выборки operator allocation и outbox claim не ждут уже заблокированные строки на PostgreSQL/MySQL |
 | Плохой план query на operator allocation | Добавлен составной индекс `operators_allocation_idx` |
 | Зависшая reservation после потери/задержки Telephony facts | Добавлен compensation command `calls:operator-reservations:release-expired` |
+| Поздний queue job после `hangup` | Перед allocation и перед assignment проверяется processable-статус call; финальный call пропускается без reservation/outbox |
 | Retry storm при массовом отсутствии операторов | Redis retry queue применяет `min_delay + jitter` и верхний cap к фактической задержке job |
 | Outbox publisher конфликтует при параллельных workers | Claim outbox использует row lock + `SKIP LOCKED` на PostgreSQL/MySQL |
 | Publisher умер после claim и оставил outbox в `processing` | `processing_started_at` + команда `calls:telephony-outbox:requeue-stale` возвращает stale records в `pending` |

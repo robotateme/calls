@@ -33,12 +33,20 @@ final readonly class ProcessIncomingCallHandler
         $result = $this->transactions->run(function () use ($command): ?ProcessIncomingCallResult {
             $call = $this->calls->findForUpdate($command->callId);
 
-            if ($call === null || ! $call->isProcessable()) {
+            if ($call === null) {
+                return null;
+            }
+
+            if (! $call->isProcessable()) {
                 return null;
             }
 
             $clientId = $this->clients->findIdByPhone($call->phoneNumber());
             $call->attachClient($clientId);
+
+            if (! $call->isProcessable()) {
+                return null;
+            }
 
             $operator = $this->operators->reserveAvailableForCall($call->callId());
 
@@ -91,7 +99,14 @@ final readonly class ProcessIncomingCallHandler
                 );
             }
 
-            $call->recordSuccessfulOperatorSearchAttempt($operator->operatorId, Timestamp::now());
+            $outcome = $call->recordSuccessfulOperatorSearchAttempt($operator->operatorId, Timestamp::now());
+
+            if ($outcome === null) {
+                $this->operators->releaseForCall($operator->operatorId, $call->callId());
+
+                return null;
+            }
+
             $this->calls->save($call);
             $this->telephonyCommands->recordCallAssignmentRequested(
                 $call->externalCallId(),

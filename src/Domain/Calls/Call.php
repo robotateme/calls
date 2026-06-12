@@ -205,7 +205,11 @@ final class Call
     public function recordSuccessfulOperatorSearchAttempt(
         OperatorId $operatorId,
         Timestamp $requestedAt,
-    ): OperatorSearchOutcome {
+    ): ?OperatorSearchOutcome {
+        if (! $this->isProcessable()) {
+            return null;
+        }
+
         $this->recordOperatorSearchAttempt();
         $this->requestOperatorAssignment($operatorId, $requestedAt);
 
