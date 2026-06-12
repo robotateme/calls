@@ -1,0 +1,26 @@
+<?php
+
+return [
+    'kafka_brokers' => env('KAFKA_BROKERS', 'kafka:9092'),
+    'kafka_consumer_adapter' => env('KAFKA_CONSUMER_ADAPTER', 'jsonl'),
+    'kafka_producer_adapter' => env('KAFKA_PRODUCER_ADAPTER', 'console'),
+    'kafka_auto_offset_reset' => env('KAFKA_AUTO_OFFSET_RESET', 'earliest'),
+    'kafka_producer_flush_timeout_ms' => (int) env('KAFKA_PRODUCER_FLUSH_TIMEOUT_MS', 10000),
+    'incoming_calls_topic' => env('KAFKA_INCOMING_CALLS_TOPIC', 'incoming-calls'),
+    'telephony_facts_topic' => env('KAFKA_TELEPHONY_FACTS_TOPIC', 'telephony.facts'),
+    'telephony_commands_topic' => env('KAFKA_TELEPHONY_COMMANDS_TOPIC', 'telephony.commands'),
+    'kafka_console_producer_binary' => env('KAFKA_CONSOLE_PRODUCER_BINARY', 'kafka-console-producer.sh'),
+    'kafka_console_producer_timeout_seconds' => (int) env('KAFKA_CONSOLE_PRODUCER_TIMEOUT_SECONDS', 10),
+    'outbox_publish_limit' => (int) env('TELEPHONY_OUTBOX_PUBLISH_LIMIT', 100),
+    'outbox_retry_delay_seconds' => (int) env('TELEPHONY_OUTBOX_RETRY_DELAY_SECONDS', 10),
+    'outbox_max_attempts' => (int) env('TELEPHONY_OUTBOX_MAX_ATTEMPTS', 10),
+    'outbox_processing_timeout_seconds' => (int) env('TELEPHONY_OUTBOX_PROCESSING_TIMEOUT_SECONDS', 120),
+    'outbox_requeue_limit' => (int) env('TELEPHONY_OUTBOX_REQUEUE_LIMIT', 100),
+    'operator_reservation_ttl_seconds' => (int) env('OPERATOR_RESERVATION_TTL_SECONDS', 120),
+    'operator_reservation_cleanup_limit' => (int) env('OPERATOR_RESERVATION_CLEANUP_LIMIT', 100),
+    'operator_search_retry_min_delay_seconds' => (int) env('OPERATOR_SEARCH_RETRY_MIN_DELAY_SECONDS', 1),
+    'operator_search_retry_jitter_seconds' => (int) env('OPERATOR_SEARCH_RETRY_JITTER_SECONDS', 5),
+    'operator_search_retry_max_delay_seconds' => (int) env('OPERATOR_SEARCH_RETRY_MAX_DELAY_SECONDS', 3600),
+    'dead_letter_retention_days' => (int) env('DEAD_LETTER_RETENTION_DAYS', 30),
+    'dead_letter_prune_limit' => (int) env('DEAD_LETTER_PRUNE_LIMIT', 1000),
+];
