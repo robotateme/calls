@@ -101,6 +101,12 @@ producer-а. Это не нормальный backlog.
 
 Application пишет counters/timings/gauges через `Metrics` port.
 
+HTTP endpoint для scrape:
+
+```text
+GET /metrics
+```
+
 Обязательные внешние метрики:
 
 - Kafka consumer lag по consumer group;

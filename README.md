@@ -190,6 +190,12 @@ make dead-letter-prune
 make validate
 ```
 
+Метрики Prometheus доступны через HTTP endpoint:
+
+```text
+GET /metrics
+```
+
 Production Kafka adapters:
 
 ```env
