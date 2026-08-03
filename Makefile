@@ -2,10 +2,12 @@ SAIL := ./vendor/bin/sail
 ARTISAN := php artisan
 COMPOSER := composer
 TEST_ENV := APP_ENV=testing APP_MAINTENANCE_DRIVER=file BCRYPT_ROUNDS=4 LOG_CHANNEL=null BROADCAST_CONNECTION=null CACHE_STORE=array DB_CONNECTION=sqlite DB_DATABASE=:memory: DB_URL= MAIL_MAILER=array QUEUE_CONNECTION=sync SESSION_DRIVER=array PULSE_ENABLED=false TELESCOPE_ENABLED=false NIGHTWATCH_ENABLED=false
+QUERY ?= up
+PROMETHEUS_REQUIRED_QUERY := {__name__=~"calls_received_total|calls_deduplicated_total|call_transitions_total|operator_reservation_attempts_total|telephony_outbox_publish_total|dead_letter_messages_total|calls_current|operators_reserved_current|telephony_outbox_current|dead_letter_current|oldest_waiting_call_age_seconds|oldest_outbox_message_age_seconds"}
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui prometheus
+.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui prometheus prometheus-ready prometheus-targets prometheus-query prometheus-smoke
 
 help:
 	@printf "%s\n" "Available targets:"
@@ -41,6 +43,10 @@ help:
 	@printf "  %-18s %s\n" "kafka-topics" "List Kafka topics"
 	@printf "  %-18s %s\n" "kafka-ui" "Print Kafka UI URL"
 	@printf "  %-18s %s\n" "prometheus" "Print Prometheus URL"
+	@printf "  %-18s %s\n" "prometheus-ready" "Check Prometheus readiness endpoint"
+	@printf "  %-18s %s\n" "prometheus-targets" "Show Prometheus scrape targets"
+	@printf "  %-18s %s\n" "prometheus-query" "Run PromQL query, pass QUERY='up'"
+	@printf "  %-18s %s\n" "prometheus-smoke" "Check required Calls metrics in Prometheus"
 
 up:
 	$(SAIL) up -d
@@ -144,3 +150,18 @@ kafka-ui:
 
 prometheus:
 	@printf "%s\n" "Prometheus: http://localhost:$${FORWARD_PROMETHEUS_PORT:-9090}"
+
+prometheus-ready:
+	curl -fsS "http://localhost:$${FORWARD_PROMETHEUS_PORT:-9090}/-/ready"
+
+prometheus-targets:
+	curl -fsS "http://localhost:$${FORWARD_PROMETHEUS_PORT:-9090}/api/v1/targets?state=active"
+
+prometheus-query:
+	curl -fsS --get "http://localhost:$${FORWARD_PROMETHEUS_PORT:-9090}/api/v1/query" --data-urlencode 'query=$(QUERY)'
+
+prometheus-smoke:
+	$(SAIL) artisan calls:metrics:snapshot
+	$(SAIL) artisan tinker --execute='use Application\Shared\Ports\Metrics; $$metrics = app(Metrics::class); $$metrics->increment("calls_received_total", 0); $$metrics->increment("calls_deduplicated_total", 0); $$metrics->increment("call_transitions_total", 0, ["from" => "new", "to" => "assignment_requested"]); $$metrics->increment("operator_reservation_attempts_total", 0, ["result" => "success"]); $$metrics->increment("telephony_outbox_publish_total", 0, ["result" => "published"]); $$metrics->increment("dead_letter_messages_total", 0, ["reason" => "invalid_payload"]);'
+	sleep 16
+	$(MAKE) prometheus-query QUERY='$(PROMETHEUS_REQUIRED_QUERY)'
