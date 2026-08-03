@@ -43,6 +43,7 @@ final readonly class ProcessIncomingCallHandler
                     return null;
                 }
 
+                $previousStatus = $call->status()->value;
                 $clientId = $this->clients->findIdByPhone($call->phoneNumber());
                 $call->attachClient($clientId);
 
@@ -74,6 +75,8 @@ final readonly class ProcessIncomingCallHandler
                             attempt: $call->operatorSearchAttempts(),
                             retryDelaySeconds: $outcome->retryDelaySeconds(),
                             finalStatus: null,
+                            fromStatus: $previousStatus,
+                            toStatus: $call->status()->value,
                         );
                     }
 
@@ -98,6 +101,8 @@ final readonly class ProcessIncomingCallHandler
                         attempt: $call->operatorSearchAttempts(),
                         retryDelaySeconds: 0,
                         finalStatus: $finalStatus->value,
+                        fromStatus: $previousStatus,
+                        toStatus: $call->status()->value,
                     );
                 }
 
@@ -105,9 +110,7 @@ final readonly class ProcessIncomingCallHandler
 
                 if ($outcome === null) {
                     $this->operators->releaseForCall($operator->operatorId, $call->callId());
-                    $this->metrics->increment('operator_reservation_total', tags: [
-                        'result' => 'conflict',
-                    ]);
+                    $this->recordOperatorReservationAttempt('conflict');
 
                     return null;
                 }
@@ -128,12 +131,12 @@ final readonly class ProcessIncomingCallHandler
                     attempt: $call->operatorSearchAttempts(),
                     retryDelaySeconds: 0,
                     finalStatus: null,
+                    fromStatus: $previousStatus,
+                    toStatus: $call->status()->value,
                 );
             });
         } catch (Throwable $exception) {
-            $this->metrics->increment('operator_reservation_total', tags: [
-                'result' => 'error',
-            ]);
+            $this->recordOperatorReservationAttempt('error');
 
             throw $exception;
         }
@@ -150,11 +153,11 @@ final readonly class ProcessIncomingCallHandler
             return;
         }
 
+        $this->recordCallTransition($result->fromStatus, $result->toStatus);
+
         if ($result->waitingForOperator) {
             $this->retryQueue->retryLater($result->callId, $result->retryDelaySeconds);
-            $this->metrics->increment('operator_reservation_total', tags: [
-                'result' => 'no_available',
-            ]);
+            $this->recordOperatorReservationAttempt('no_available');
             $this->metrics->increment('operator_search.retry_scheduled');
             $this->metrics->increment('retry_scheduled_total', tags: [
                 'reason' => 'no_available_operator',
@@ -170,9 +173,7 @@ final readonly class ProcessIncomingCallHandler
         }
 
         if ($result->operatorId === null) {
-            $this->metrics->increment('operator_reservation_total', tags: [
-                'result' => 'no_available',
-            ]);
+            $this->recordOperatorReservationAttempt('no_available');
             $this->metrics->increment('operator_search.exhausted', tags: [
                 'final_status' => $result->finalStatus ?? 'unknown',
             ]);
@@ -190,9 +191,7 @@ final readonly class ProcessIncomingCallHandler
         }
 
         $this->logger->callAssignmentRequested($result->callId, $result->operatorId, $result->clientId);
-        $this->metrics->increment('operator_reservation_total', tags: [
-            'result' => 'success',
-        ]);
+        $this->recordOperatorReservationAttempt('success');
         $this->metrics->increment('operator_assignment.requested');
         $this->metrics->timing('call_processing.duration_ms', (microtime(true) - $startedAt) * 1000, [
             'result' => 'assignment_requested',
@@ -205,5 +204,25 @@ final readonly class ProcessIncomingCallHandler
     private function secondsSince(float $startedAt): float
     {
         return microtime(true) - $startedAt;
+    }
+
+    private function recordOperatorReservationAttempt(string $result): void
+    {
+        $tags = ['result' => $result];
+
+        $this->metrics->increment('operator_reservation_total', tags: $tags);
+        $this->metrics->increment('operator_reservation_attempts_total', tags: $tags);
+    }
+
+    private function recordCallTransition(string $fromStatus, string $toStatus): void
+    {
+        if ($fromStatus === $toStatus) {
+            return;
+        }
+
+        $this->metrics->increment('call_transitions_total', tags: [
+            'from' => $fromStatus,
+            'to' => $toStatus,
+        ]);
     }
 }

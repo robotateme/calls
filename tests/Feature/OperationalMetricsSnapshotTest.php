@@ -73,11 +73,15 @@ final class OperationalMetricsSnapshotTest extends TestCase
         $this->assertContains(['telephony_outbox_current', 1, ['status' => 'processing']], $metrics->gauges);
         $this->assertContains(['telephony_outbox_current', 0, ['status' => 'published']], $metrics->gauges);
         $this->assertGaugeRecorded('telephony_outbox_oldest_pending_seconds', [], $metrics);
+        $this->assertGaugeRecorded('oldest_outbox_message_age_seconds', [], $metrics);
         $this->assertContains(['dead_letter.depth', 2, ['reason' => 'invalid_payload']], $metrics->gauges);
         $this->assertContains(['dead_letter_messages_current', 2, ['reason' => 'invalid_payload']], $metrics->gauges);
+        $this->assertContains(['dead_letter_current', 2, []], $metrics->gauges);
         $this->assertContains(['operator_reservation.active', 1, []], $metrics->gauges);
         $this->assertContains(['operator_reservations_current', 1, []], $metrics->gauges);
+        $this->assertContains(['operators_reserved_current', 1, []], $metrics->gauges);
         $this->assertContains(['operator_reservation.expired', 1, []], $metrics->gauges);
+        $this->assertGaugeRecorded('oldest_waiting_call_age_seconds', [], $metrics);
         $this->assertContains(['queue.depth', 0, ['queue' => 'calls']], $metrics->gauges);
         $this->assertContains(['queue.depth', 0, ['queue' => 'calls-retry']], $metrics->gauges);
     }

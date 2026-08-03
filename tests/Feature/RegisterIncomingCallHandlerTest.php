@@ -49,6 +49,7 @@ final class RegisterIncomingCallHandlerTest extends TestCase
         ]);
         $this->assertSame([$result->callId], $queue->callIds);
         $this->assertContains(['calls_received_total', 1, []], $metrics->increments);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'none', 'to' => 'new']], $metrics->increments);
 
         Event::assertDispatched(IncomingCallRegistered::class, static function (IncomingCallRegistered $event) use ($result): bool {
             return $event->eventId() === 'incoming-call:asterisk-linkedid-1001:registered'
@@ -85,7 +86,11 @@ final class RegisterIncomingCallHandlerTest extends TestCase
         $this->assertFalse($second->created);
         $this->assertSame($first->callId, $second->callId);
         $this->assertSame([$first->callId], $queue->callIds);
-        $this->assertSame([['calls_received_total', 1, []]], $metrics->increments);
+        $this->assertSame([
+            ['calls_received_total', 1, []],
+            ['call_transitions_total', 1, ['from' => 'none', 'to' => 'new']],
+            ['calls_deduplicated_total', 1, []],
+        ], $metrics->increments);
         Event::assertDispatched(IncomingCallRegistered::class, 1);
     }
 

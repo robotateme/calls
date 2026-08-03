@@ -291,14 +291,18 @@ Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFact
         'calls.depth',
         'calls_current',
         'call_time_in_state_seconds',
+        'oldest_waiting_call_age_seconds',
         'telephony_outbox.depth',
         'telephony_outbox_current',
         'telephony_outbox_oldest_pending_seconds',
+        'oldest_outbox_message_age_seconds',
         'dead_letter.depth',
         'dead_letter_messages_current',
+        'dead_letter_current',
         'operator_reservation.active',
         'operator_reservation.expired',
         'operator_reservations_current',
+        'operators_reserved_current',
         'queue.depth',
     ] as $metricName) {
         $prometheusMetricsStore->forgetGaugeSeries($metricName);
@@ -344,6 +348,8 @@ Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFact
                 'status' => $status,
             ]);
         }
+
+        $metrics->gauge('oldest_waiting_call_age_seconds', $stateAges['waiting']);
     }
 
     if (Schema::hasTable('telephony_outbox')) {
@@ -376,18 +382,28 @@ Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFact
             ->whereNull('canceled_at')
             ->min('created_at');
 
-        $metrics->gauge('telephony_outbox_oldest_pending_seconds', $secondsSince($oldestPendingCreatedAt));
+        $oldestPendingOutboxAgeSeconds = $secondsSince($oldestPendingCreatedAt);
+
+        $metrics->gauge('telephony_outbox_oldest_pending_seconds', $oldestPendingOutboxAgeSeconds);
+        $metrics->gauge('oldest_outbox_message_age_seconds', $oldestPendingOutboxAgeSeconds);
     }
 
     if (Schema::hasTable('dead_letter_messages')) {
+        $deadLetterTotal = 0;
+
         foreach (DB::table('dead_letter_messages')->select('reason', DB::raw('count(*) as total'))->whereNull('resolved_at')->groupBy('reason')->get() as $row) {
-            $metrics->gauge('dead_letter.depth', (int) $row->total, [
+            $reasonTotal = (int) $row->total;
+            $deadLetterTotal += $reasonTotal;
+
+            $metrics->gauge('dead_letter.depth', $reasonTotal, [
                 'reason' => (string) $row->reason,
             ]);
-            $metrics->gauge('dead_letter_messages_current', (int) $row->total, [
+            $metrics->gauge('dead_letter_messages_current', $reasonTotal, [
                 'reason' => (string) $row->reason,
             ]);
         }
+
+        $metrics->gauge('dead_letter_current', $deadLetterTotal);
     }
 
     if (Schema::hasTable('operators')) {
@@ -395,6 +411,7 @@ Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFact
 
         $metrics->gauge('operator_reservation.active', $activeReservations);
         $metrics->gauge('operator_reservations_current', $activeReservations);
+        $metrics->gauge('operators_reserved_current', $activeReservations);
         $metrics->gauge('operator_reservation.expired', (int) DB::table('operators')
             ->whereNotNull('reserved_call_id')
             ->where('reserved_at', '<=', now()->subSeconds($reservationTtlSeconds))

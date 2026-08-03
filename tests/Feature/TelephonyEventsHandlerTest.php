@@ -25,6 +25,9 @@ final class TelephonyEventsHandlerTest extends TestCase
 
     public function test_it_marks_operator_dialing(): void
     {
+        $metrics = new FakeTelephonyEventMetrics;
+        $this->app->instance(Metrics::class, $metrics);
+
         $operator = $this->operator();
         $call = $this->createCall([
             'external_call_id' => 'asterisk-linkedid-4001',
@@ -46,6 +49,7 @@ final class TelephonyEventsHandlerTest extends TestCase
             'operator_id' => $operator->id,
         ]);
         $this->assertNotNull(Call::query()->findOrFail($call->id)->operator_dialing_at);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'assignment_requested', 'to' => 'operator_dialing']], $metrics->increments);
     }
 
     public function test_it_marks_bridge_established_as_connected(): void
@@ -81,6 +85,7 @@ final class TelephonyEventsHandlerTest extends TestCase
             'reserved_at' => null,
         ]);
         $this->assertNotNull(Call::query()->findOrFail($call->id)->connected_at);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'operator_dialing', 'to' => 'connected']], $metrics->increments);
         $this->assertContains(['calls_finished_total', 1, ['result' => 'connected']], $metrics->increments);
         $this->assertTimingRecorded('call_time_to_connect_seconds', [], $metrics);
     }
@@ -127,6 +132,7 @@ final class TelephonyEventsHandlerTest extends TestCase
             'idempotency_key' => 'asterisk-linkedid-4003:operator_search_retry_scheduled:1',
         ]);
         $this->assertSame([[$call->id, 20]], $retryQueue->retries);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'operator_dialing', 'to' => 'waiting']], $metrics->increments);
         $this->assertContains(['retry_scheduled_total', 1, ['reason' => 'operator_assignment_failed']], $metrics->increments);
     }
 
@@ -171,6 +177,7 @@ final class TelephonyEventsHandlerTest extends TestCase
             'idempotency_key' => 'asterisk-linkedid-4004:operator_search_exhausted:1',
         ]);
         $this->assertSame([], $retryQueue->retries);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'operator_dialing', 'to' => 'callback_missed']], $metrics->increments);
         $this->assertContains(['calls_finished_total', 1, ['result' => 'callback_missed']], $metrics->increments);
     }
 

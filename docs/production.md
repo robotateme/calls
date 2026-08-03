@@ -114,6 +114,18 @@ GET /metrics
 
 Обязательные внешние метрики:
 
+- `calls_received_total`;
+- `calls_deduplicated_total`;
+- `call_transitions_total{from,to}`;
+- `operator_reservation_attempts_total{result}`;
+- `telephony_outbox_publish_total{result}`;
+- `dead_letter_messages_total{reason}`;
+- `calls_current{status}`;
+- `operators_reserved_current`;
+- `telephony_outbox_current{status}`;
+- `dead_letter_current`;
+- `oldest_waiting_call_age_seconds`;
+- `oldest_outbox_message_age_seconds`;
 - Kafka consumer lag по consumer group;
 - Kafka broker produce/fetch latency;
 - PostgreSQL lock wait и slow queries;

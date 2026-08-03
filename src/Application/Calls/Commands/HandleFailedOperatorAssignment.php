@@ -10,7 +10,6 @@ use Application\Operators\Ports\OperatorReservationRepository;
 use Application\Shared\Ports\Metrics;
 use Application\Shared\Ports\TransactionManager;
 use Application\Telephony\Ports\TelephonyCommandOutboxWriter;
-use Domain\Calls\OperatorAssignmentFailure;
 use Domain\Operators\OperatorId;
 use Domain\Shared\Timestamp;
 
@@ -30,13 +29,14 @@ final readonly class HandleFailedOperatorAssignment
         $normalizedExternalCallId = trim($externalCallId);
         $assignedOperatorId = OperatorId::fromInt($operatorId);
 
-        $result = $this->transactions->run(function () use ($normalizedExternalCallId, $assignedOperatorId, $assignmentAttempt): ?OperatorAssignmentFailure {
+        $result = $this->transactions->run(function () use ($normalizedExternalCallId, $assignedOperatorId, $assignmentAttempt): ?array {
             $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
                 return null;
             }
 
+            $previousStatus = $call->status()->value;
             $failure = $call->failPendingOperatorAssignment(
                 operatorId: $assignedOperatorId,
                 attempt: $assignmentAttempt,
@@ -57,7 +57,11 @@ final readonly class HandleFailedOperatorAssignment
                     $failure->retryDelaySeconds(),
                 );
 
-                return $failure;
+                return [
+                    'failure' => $failure,
+                    'from' => $previousStatus,
+                    'to' => $call->status()->value,
+                ];
             }
 
             $finalStatus = $failure->finalStatus();
@@ -72,11 +76,23 @@ final readonly class HandleFailedOperatorAssignment
                 $finalStatus->value,
             );
 
-            return $failure;
+            return [
+                'failure' => $failure,
+                'from' => $previousStatus,
+                'to' => $call->status()->value,
+            ];
         });
 
-        if ($result?->shouldRetry() === true) {
-            $this->retryQueue->retryLater($result->callId(), $result->retryDelaySeconds());
+        if ($result === null) {
+            return;
+        }
+
+        $failure = $result['failure'];
+
+        $this->recordCallTransition($result['from'], $result['to']);
+
+        if ($failure->shouldRetry()) {
+            $this->retryQueue->retryLater($failure->callId(), $failure->retryDelaySeconds());
             $this->metrics->increment('retry_scheduled_total', tags: [
                 'reason' => 'operator_assignment_failed',
             ]);
@@ -84,12 +100,24 @@ final readonly class HandleFailedOperatorAssignment
             return;
         }
 
-        $finalStatus = $result?->finalStatus();
+        $finalStatus = $failure->finalStatus();
 
         if ($finalStatus !== null) {
             $this->metrics->increment('calls_finished_total', tags: [
                 'result' => $finalStatus->value,
             ]);
         }
+    }
+
+    private function recordCallTransition(string $fromStatus, string $toStatus): void
+    {
+        if ($fromStatus === $toStatus) {
+            return;
+        }
+
+        $this->metrics->increment('call_transitions_total', tags: [
+            'from' => $fromStatus,
+            'to' => $toStatus,
+        ]);
     }
 }

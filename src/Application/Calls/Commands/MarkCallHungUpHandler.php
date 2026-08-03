@@ -26,7 +26,7 @@ final readonly class MarkCallHungUpHandler
     {
         $normalizedExternalCallId = trim($command->externalCallId);
 
-        $finishedStatus = $this->transactions->run(function () use ($normalizedExternalCallId): ?string {
+        $result = $this->transactions->run(function () use ($normalizedExternalCallId): ?array {
             $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
@@ -35,6 +35,7 @@ final readonly class MarkCallHungUpHandler
 
             $operatorId = $call->isAssignmentInProgress() ? $call->assignedOperatorId() : null;
             $attempt = $call->operatorSearchAttempts();
+            $previousStatus = $call->status()->value;
 
             if (! $call->markHungUp()) {
                 return null;
@@ -60,13 +61,31 @@ final readonly class MarkCallHungUpHandler
                 $this->operators->releaseForCall($operatorId, $call->callId());
             }
 
-            return $call->status()->value;
+            return [
+                'from' => $previousStatus,
+                'to' => $call->status()->value,
+            ];
         });
 
-        if ($finishedStatus !== null) {
-            $this->metrics->increment('calls_finished_total', tags: [
-                'result' => $finishedStatus,
-            ]);
+        if ($result === null) {
+            return;
         }
+
+        $this->recordCallTransition($result['from'], $result['to']);
+        $this->metrics->increment('calls_finished_total', tags: [
+            'result' => $result['to'],
+        ]);
+    }
+
+    private function recordCallTransition(string $fromStatus, string $toStatus): void
+    {
+        if ($fromStatus === $toStatus) {
+            return;
+        }
+
+        $this->metrics->increment('call_transitions_total', tags: [
+            'from' => $fromStatus,
+            'to' => $toStatus,
+        ]);
     }
 }

@@ -73,6 +73,9 @@ final class DeadLetterQueueTest extends TestCase
             'reason' => 'invalid_payload',
             'result' => 'inserted',
         ]], $metrics->counters);
+        $this->assertContains(['dead_letter_messages_total', 1, [
+            'reason' => 'invalid_payload',
+        ]], $metrics->counters);
         $this->assertContains(['dead_letter.recorded', 1, [
             'source' => 'incoming-calls-consumer',
             'topic' => 'incoming-calls',
@@ -113,6 +116,9 @@ final class DeadLetterQueueTest extends TestCase
             'topic' => 'telephony.facts',
             'reason' => 'handler_failed',
             'result' => 'inserted',
+        ]], $metrics->counters);
+        $this->assertContains(['dead_letter_messages_total', 1, [
+            'reason' => 'handler_failed',
         ]], $metrics->counters);
     }
 }

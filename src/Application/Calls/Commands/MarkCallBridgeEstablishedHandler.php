@@ -26,14 +26,14 @@ final readonly class MarkCallBridgeEstablishedHandler
         $normalizedExternalCallId = trim($command->externalCallId);
         $operatorId = OperatorId::fromInt($command->operatorId);
 
-        $connectedAfterSeconds = $this->transactions->run(function () use ($normalizedExternalCallId, $operatorId, $command): ?float {
+        $result = $this->transactions->run(function () use ($normalizedExternalCallId, $operatorId, $command): ?array {
             $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
                 return null;
             }
 
-            $previousStatus = $call->status();
+            $previousStatus = $call->status()->value;
             $connectedAt = Timestamp::now();
 
             if (! $call->markConnected(
@@ -47,25 +47,42 @@ final readonly class MarkCallBridgeEstablishedHandler
             $this->calls->save($call);
             $this->operators->releaseForCall($operatorId, $call->callId());
 
-            if ($previousStatus === CallStatus::Connected) {
+            if ($previousStatus === CallStatus::Connected->value) {
                 return null;
             }
 
-            return $this->secondsBetween($call->createdTimestamp(), $connectedAt);
+            return [
+                'connected_after_seconds' => $this->secondsBetween($call->createdTimestamp(), $connectedAt),
+                'from' => $previousStatus,
+                'to' => $call->status()->value,
+            ];
         });
 
-        if ($connectedAfterSeconds === null) {
+        if ($result === null) {
             return;
         }
 
+        $this->recordCallTransition($result['from'], $result['to']);
         $this->metrics->increment('calls_finished_total', tags: [
             'result' => 'connected',
         ]);
-        $this->metrics->timing('call_time_to_connect_seconds', $connectedAfterSeconds);
+        $this->metrics->timing('call_time_to_connect_seconds', $result['connected_after_seconds']);
     }
 
     private function secondsBetween(Timestamp $from, Timestamp $to): float
     {
         return max(0, $to->toDateTimeImmutable()->getTimestamp() - $from->toDateTimeImmutable()->getTimestamp());
+    }
+
+    private function recordCallTransition(string $fromStatus, string $toStatus): void
+    {
+        if ($fromStatus === $toStatus) {
+            return;
+        }
+
+        $this->metrics->increment('call_transitions_total', tags: [
+            'from' => $fromStatus,
+            'to' => $toStatus,
+        ]);
     }
 }

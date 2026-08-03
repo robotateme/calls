@@ -15,5 +15,7 @@ final readonly class ProcessIncomingCallResult
         public int $attempt,
         public int $retryDelaySeconds,
         public ?string $finalStatus,
+        public string $fromStatus,
+        public string $toStatus,
     ) {}
 }

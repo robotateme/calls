@@ -141,5 +141,20 @@ http://laravel.test/metrics
 
 UI Prometheus доступен на `http://localhost:9090`.
 
+Базовый application contract:
+
+- `calls_received_total`
+- `calls_deduplicated_total`
+- `call_transitions_total{from,to}`
+- `operator_reservation_attempts_total{result}`
+- `telephony_outbox_publish_total{result}`
+- `dead_letter_messages_total{reason}`
+- `calls_current{status}`
+- `operators_reserved_current`
+- `telephony_outbox_current{status}`
+- `dead_letter_current`
+- `oldest_waiting_call_age_seconds`
+- `oldest_outbox_message_age_seconds`
+
 В production также должны мониториться Kafka lag, Redis queue depth, PostgreSQL
 lock wait/slow queries, outbox depth и DLQ depth.

@@ -44,6 +44,12 @@ final readonly class EloquentDeadLetterQueue implements DeadLetterQueue
             'reason' => $reason,
             'result' => $inserted > 0 ? 'inserted' : 'duplicate',
         ]);
+
+        if ($inserted > 0) {
+            $this->metrics->increment('dead_letter_messages_total', tags: [
+                'reason' => $reason,
+            ]);
+        }
     }
 
     private function messageHash(

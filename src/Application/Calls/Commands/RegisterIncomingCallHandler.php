@@ -70,6 +70,10 @@ final readonly class RegisterIncomingCallHandler
 
         if ($result->created) {
             $this->metrics->increment('calls_received_total');
+            $this->metrics->increment('call_transitions_total', tags: [
+                'from' => 'none',
+                'to' => 'new',
+            ]);
 
             $this->events->publish(new IncomingCallRegistered(
                 callId: $result->callId,
@@ -78,6 +82,8 @@ final readonly class RegisterIncomingCallHandler
                 kafkaMessageId: $normalizedKafkaMessageId,
             ));
             $this->processingQueue->enqueue($result->callId);
+        } else {
+            $this->metrics->increment('calls_deduplicated_total');
         }
 
         return $result;

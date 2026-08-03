@@ -60,6 +60,8 @@ final class ProcessIncomingCallJobTest extends TestCase
         ]);
         $this->assertSame([], $retryQueue->retries);
         $this->assertContains(['operator_reservation_total', 1, ['result' => 'success']], $metrics->increments);
+        $this->assertContains(['operator_reservation_attempts_total', 1, ['result' => 'success']], $metrics->increments);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'new', 'to' => 'assignment_requested']], $metrics->increments);
         $this->assertTimingRecorded('call_processing_duration_seconds', ['result' => 'assignment_requested'], $metrics);
     }
 
@@ -254,6 +256,8 @@ final class ProcessIncomingCallJobTest extends TestCase
         $this->assertNotNull(Call::query()->findOrFail($call->id)->next_operator_search_at);
         $this->assertSame([[$call->id, 15]], $retryQueue->retries);
         $this->assertContains(['operator_reservation_total', 1, ['result' => 'no_available']], $metrics->increments);
+        $this->assertContains(['operator_reservation_attempts_total', 1, ['result' => 'no_available']], $metrics->increments);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'new', 'to' => 'waiting']], $metrics->increments);
         $this->assertContains(['retry_scheduled_total', 1, ['reason' => 'no_available_operator']], $metrics->increments);
         $this->assertTimingRecorded('call_processing_duration_seconds', ['result' => 'retry_scheduled'], $metrics);
         $this->assertDatabaseHas('telephony_outbox', [
@@ -323,6 +327,8 @@ final class ProcessIncomingCallJobTest extends TestCase
         ]);
         $this->assertSame([], $retryQueue->retries);
         $this->assertContains(['operator_reservation_total', 1, ['result' => 'no_available']], $metrics->increments);
+        $this->assertContains(['operator_reservation_attempts_total', 1, ['result' => 'no_available']], $metrics->increments);
+        $this->assertContains(['call_transitions_total', 1, ['from' => 'new', 'to' => 'callback_missed']], $metrics->increments);
         $this->assertContains(['calls_finished_total', 1, ['result' => 'callback_missed']], $metrics->increments);
         $this->assertTimingRecorded('call_processing_duration_seconds', ['result' => 'exhausted'], $metrics);
         $this->assertDatabaseHas('telephony_outbox', [
