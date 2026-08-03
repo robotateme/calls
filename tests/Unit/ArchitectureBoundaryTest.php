@@ -177,9 +177,108 @@ final class ArchitectureBoundaryTest extends TestCase
      */
     private function imports(SplFileInfo $file): array
     {
-        preg_match_all('/^use\s+([^;]+);/m', (string) file_get_contents($file->getPathname()), $matches);
+        $tokens = token_get_all((string) file_get_contents($file->getPathname()));
+        $imports = [];
+        $braceDepth = 0;
+        $collectingUse = false;
+        $currentImport = '';
+        $currentPrefix = '';
+        $groupedImports = [];
+        $insideGroupedUse = false;
 
-        return $matches[1];
+        foreach ($tokens as $token) {
+            $tokenName = is_array($token) ? $token[0] : null;
+            $tokenText = is_array($token) ? $token[1] : $token;
+
+            if ($tokenText === '{') {
+                if ($collectingUse && $braceDepth === 0) {
+                    $insideGroupedUse = true;
+                    $currentPrefix = rtrim($currentImport, '\\');
+                    $currentImport = '';
+                    $groupedImports = [];
+
+                    continue;
+                }
+
+                $braceDepth++;
+
+                continue;
+            }
+
+            if ($tokenText === '}') {
+                if ($insideGroupedUse && $braceDepth === 0) {
+                    foreach ($groupedImports as $groupedImport) {
+                        $imports[] = $currentPrefix.'\\'.$groupedImport;
+                    }
+
+                    $collectingUse = false;
+                    $insideGroupedUse = false;
+                    $currentImport = '';
+                    $currentPrefix = '';
+                    $groupedImports = [];
+
+                    continue;
+                }
+
+                $braceDepth--;
+
+                continue;
+            }
+
+            if ($braceDepth === 0 && $tokenName === T_USE) {
+                $collectingUse = true;
+                $currentImport = '';
+                $currentPrefix = '';
+                $groupedImports = [];
+                $insideGroupedUse = false;
+
+                continue;
+            }
+
+            if (! $collectingUse) {
+                continue;
+            }
+
+            if ($tokenText === ';') {
+                if ($insideGroupedUse) {
+                    foreach ($groupedImports as $groupedImport) {
+                        $imports[] = $currentPrefix.'\\'.$groupedImport;
+                    }
+                } elseif ($currentImport !== '') {
+                    $imports[] = trim($currentImport);
+                }
+
+                $collectingUse = false;
+                $insideGroupedUse = false;
+                $currentImport = '';
+                $currentPrefix = '';
+                $groupedImports = [];
+
+                continue;
+            }
+
+            if ($insideGroupedUse && $tokenText === ',') {
+                if (trim($currentImport) !== '') {
+                    $groupedImports[] = trim($currentImport);
+                }
+
+                $currentImport = '';
+
+                continue;
+            }
+
+            if ($tokenName === T_WHITESPACE) {
+                continue;
+            }
+
+            if (in_array($tokenName, [T_FUNCTION, T_CONST], true) && $currentImport === '') {
+                continue;
+            }
+
+            $currentImport .= $tokenText;
+        }
+
+        return $imports;
     }
 
     private function className(SplFileInfo $file): ?string
@@ -188,7 +287,7 @@ final class ArchitectureBoundaryTest extends TestCase
 
         if (
             preg_match('/^namespace\s+([^;]+);/m', $contents, $namespace) !== 1
-            || preg_match('/^(?:interface|final\s+class|class)\s+([A-Za-z0-9_]+)/m', $contents, $class) !== 1
+            || preg_match('/^(?:interface|readonly\s+class|final\s+readonly\s+class|final\s+class|abstract\s+class|class)\s+([A-Za-z0-9_]+)/m', $contents, $class) !== 1
         ) {
             return null;
         }
