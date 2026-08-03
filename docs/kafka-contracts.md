@@ -1,44 +1,39 @@
-# Kafka Contracts
+# Kafka
 
-Kafka - основная межсервисная шина Calls. Она используется для входящих facts от
-Telephony/AMI Gateway и исходящих commands в Telephony.
+Kafka - главный канал между Calls и Telephony.
 
-## Почему Kafka
+Используется для:
 
-- durable log и replay после сбоев;
-- ordering внутри partition по `external_call_id`;
-- независимые consumer groups для Calls, Telephony, audit/read models;
-- backpressure через consumer lag;
-- отсутствие синхронного HTTP side effect-а внутри DB transaction Calls.
+- входящих звонков;
+- фактов от Telephony;
+- команд Calls в Telephony.
 
-Redis queue остаётся внутренней очередью jobs Calls и не считается
-межсервисным контрактом.
+Redis queue - только внутренняя очередь Calls. Это не межсервисный договор.
 
-## Message key
+## Key
 
-Все сообщения одного звонка используют один key:
+Для всех сообщений одного звонка:
 
 ```text
 key = external_call_id
 ```
 
-Иначе `hangup`, `operator_dialing`, `bridge_established` и no-answer facts могут
-прийти в Calls out-of-order.
+Так Kafka держит порядок событий одного звонка внутри partition.
 
-Решение зафиксировано в
-[ADR-0003](adr/0003-kafka-message-key-external-call-id.md).
+Если key есть и он не равен `payload.external_call_id`, сообщение идёт в DLQ.
+
+См. [ADR-0003](adr/0003-kafka-message-key-external-call-id.md).
 
 ## Topics
 
-| Topic | Direction | Producer | Consumer |
-|---|---|---|---|
-| `incoming-calls` | fact | Telephony/AMI Gateway | Calls |
-| `telephony.facts` | fact | Telephony | Calls |
-| `telephony.commands` | command | Calls outbox publisher | Telephony |
-| `*.DLQ` | dead letter | Calls consumers | ops/manual recovery |
+| Topic | Кто пишет | Кто читает |
+|---|---|---|
+| `incoming-calls` | Telephony/AMI Gateway | Calls |
+| `telephony.facts` | Telephony | Calls |
+| `telephony.commands` | Calls | Telephony |
+| `*.DLQ` | Calls | ops/manual |
 
-Topic names настраиваются через env/config. Production Kafka adapters включаются
-через:
+Настройки:
 
 ```env
 KAFKA_CONSUMER_ADAPTER=rdkafka
@@ -48,12 +43,13 @@ KAFKA_AUTO_OFFSET_RESET=earliest
 KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 ```
 
-`rdkafka` adapters требуют PHP extension `php-rdkafka` и падают fail-fast, если
-расширение не установлено.
+Для `rdkafka` нужен `php-rdkafka`.
 
 ## Commands: Calls -> Telephony
 
-Commands публикуются только из `telephony_outbox`. Envelope:
+Commands публикуются только из `telephony_outbox`.
+
+Envelope:
 
 ```json
 {
@@ -66,18 +62,18 @@ Commands публикуются только из `telephony_outbox`. Envelope:
 }
 ```
 
-Обязательные поля:
+Поля:
 
-| Field | Meaning |
+| Field | Что это |
 |---|---|
-| `schema_version` | версия контракта |
-| `command_id` | технический id outbox-команды |
-| `idempotency_key` | ключ дедупликации side effect-а |
+| `schema_version` | версия |
+| `command_id` | id команды в outbox |
+| `idempotency_key` | ключ дедупликации в Telephony |
 | `type` | тип команды |
-| `external_call_id` | business key и Kafka key |
-| `payload` | данные команды |
+| `external_call_id` | id звонка и Kafka key |
+| `payload` | тело команды |
 
-Текущий console producer отправляет keyed message в формате:
+Console producer отправляет:
 
 ```text
 external_call_id<TAB>json_payload
@@ -85,7 +81,7 @@ external_call_id<TAB>json_payload
 
 ### `call_assignment_requested`
 
-Когда Calls нашёл и зарезервировал оператора.
+Calls нашёл оператора и поставил бронь.
 
 Idempotency key:
 
@@ -105,7 +101,7 @@ Payload:
 
 ### `call_assignment_canceled`
 
-Когда call сброшен или assignment timeout случился после публикации assignment.
+Calls отменяет назначение после hangup или timeout.
 
 Idempotency key:
 
@@ -124,14 +120,14 @@ Payload:
 }
 ```
 
-Reasons:
+`reason`:
 
 - `call_hung_up`;
 - `operator_assignment_timeout`.
 
 ### `operator_search_retry_scheduled`
 
-Когда оператор не найден или назначение не состоялось, но попытки ещё есть.
+Оператор не найден или назначение сорвалось, но попытки ещё есть.
 
 Idempotency key:
 
@@ -149,12 +145,12 @@ Payload:
 }
 ```
 
-`retry_delay_seconds` - бизнес-delay из policy. Redis queue может добавить
-операционный min delay/jitter/cap, но наружу в Kafka уходит исходное правило.
+`retry_delay_seconds` - бизнес-задержка. Redis может добавить технический jitter,
+но в Kafka уходит это значение.
 
 ### `operator_search_exhausted`
 
-Когда попытки поиска оператора исчерпаны.
+Попытки поиска закончились.
 
 Idempotency key:
 
@@ -180,9 +176,6 @@ Payload:
 
 ## Facts: Telephony -> Calls
 
-Consumer boundary реализован через `KafkaConsumer` port и
-`HandleKafkaCallFactHandler`.
-
 Consumer получает:
 
 - source;
@@ -190,19 +183,20 @@ Consumer получает:
 - partition/offset;
 - Kafka key;
 - trace id;
-- raw JSON payload.
+- raw JSON.
 
-Поддерживается `schema_version=1`. Для `incoming-calls` flat payload без версии
-трактуется как version 1. Для multi-type topics, например `telephony.facts`,
-версия должна быть в envelope.
+Поддерживается `schema_version=1`.
 
-Локальная проверка одного сообщения:
+Для `incoming-calls` можно передать payload без envelope. Для `telephony.facts`
+нужен envelope с `type`.
+
+Проверка одного сообщения:
 
 ```bash
 php artisan calls:kafka:handle-message incoming-calls '{"external_call_id":"asterisk-linkedid-1001","phone":"+15550001001"}' --key=asterisk-linkedid-1001
 ```
 
-JSONL smoke loop:
+JSONL-проверка:
 
 ```bash
 printf '%s\n' '{"topic":"incoming-calls","partition":0,"offset":1,"key":"asterisk-linkedid-1001","payload":{"schema_version":1,"external_call_id":"asterisk-linkedid-1001","phone":"+15550001001"}}' \
@@ -225,11 +219,12 @@ Payload:
 }
 ```
 
-Maps to `RegisterIncomingCallFromKafkaCommand`.
+Handler: `RegisterIncomingCallFromKafkaCommand`.
 
 ### `operator_dialing`
 
-External Telephony fact. Internally Calls maps it to `operator_dialing`.
+Telephony дозванивается до оператора. Внутренний статус Calls тоже
+`operator_dialing`.
 
 Payload:
 
@@ -245,9 +240,11 @@ Payload:
 }
 ```
 
-Maps to `MarkOperatorDialingFromKafkaCommand`.
+Handler: `MarkOperatorDialingFromKafkaCommand`.
 
 ### `bridge_established`
+
+Клиент и оператор соединены.
 
 Payload:
 
@@ -263,9 +260,11 @@ Payload:
 }
 ```
 
-Maps to `MarkCallBridgeEstablishedFromKafkaCommand`.
+Handler: `MarkCallBridgeEstablishedFromKafkaCommand`.
 
 ### `operator_no_answer`
+
+Оператор не ответил.
 
 Payload:
 
@@ -281,9 +280,11 @@ Payload:
 }
 ```
 
-Maps to `MarkOperatorNoAnswerFromKafkaCommand`.
+Handler: `MarkOperatorNoAnswerFromKafkaCommand`.
 
 ### `operator_leg_dropped`
+
+Операторский leg оборвался.
 
 Payload:
 
@@ -299,10 +300,13 @@ Payload:
 }
 ```
 
-Maps to `MarkOperatorLegDroppedFromKafkaCommand`. До `connected` это неудачное
-назначение. После `connected` для Calls это no-op.
+Handler: `MarkOperatorLegDroppedFromKafkaCommand`.
+
+До `connected` это неудачное назначение. После `connected` для Calls это no-op.
 
 ### `hangup`
+
+Клиент повесил трубку.
 
 Payload:
 
@@ -316,43 +320,44 @@ Payload:
 }
 ```
 
-Maps to `MarkCallHungUpFromKafkaCommand`. До `connected` Calls закрывает call по
-hangup policy. После `connected` Calls не моделирует разговор.
+Handler: `MarkCallHungUpFromKafkaCommand`.
 
-## Idempotency
+До `connected` Calls закрывает звонок по policy. После `connected` Calls не
+ведёт разговор.
+
+## Дедупликация
 
 Commands:
 
 - `telephony_outbox.idempotency_key` уникален;
-- publisher может повторить Kafka publish после stale processing requeue;
-- Telephony должна дедуплицировать commands по `idempotency_key`.
+- publisher может повторить отправку;
+- Telephony должна дедуплицировать по `idempotency_key`.
 
 Facts:
 
-- Calls дедуплицирует incoming call по `external_call_id`;
-- facts назначения применяются только при совпадении `operator_id` и
-  `assignment_attempt` с текущим assignment;
-- поздние facts по старой попытке становятся no-op;
-- если источник перестанет гарантировать уникальность facts, нужен inbox по
-  event id/message id.
+- входящий звонок дедуплицируется по `external_call_id`;
+- факты назначения применяются только при совпадении `operator_id` и
+  `assignment_attempt`;
+- старые факты по другой попытке становятся no-op;
+- если источник начнёт присылать дубли facts, нужен inbox.
 
 ## DLQ
 
-Record уходит в DLQ, когда consumer не может безопасно применить Kafka message:
+В DLQ идут сообщения, которые нельзя безопасно применить:
 
-- invalid JSON/payload;
-- unknown `type`;
-- unsupported `schema_version`;
-- missing/mismatched `external_call_id`;
-- handler failure.
+- битый JSON или payload;
+- неизвестный `type`;
+- неподдержанный `schema_version`;
+- нет `external_call_id`;
+- Kafka key не равен `external_call_id`;
+- handler упал.
 
-Текущая DLQ - локальная таблица `dead_letter_messages` с `message_hash` для
-идемпотентной записи. В production adapter можно заменить на Kafka DLQ topic без
-изменения application contract.
+Сейчас DLQ - таблица `dead_letter_messages` с `message_hash`. Позже её можно
+заменить на Kafka DLQ topic без смены application-контракта.
 
-## Не реализовано сейчас
+## Не сделано
 
-- inbox/event store для facts;
+- inbox для facts;
 - schema registry;
-- автоматический replay из DLQ;
+- автоматическая повторная обработка из DLQ;
 - отдельные Kafka DLQ topics.

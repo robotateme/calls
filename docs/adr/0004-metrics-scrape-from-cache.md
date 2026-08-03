@@ -1,4 +1,4 @@
-# ADR-0004: /metrics отдаёт только кешированный snapshot
+# ADR-0004: /metrics отдаёт только готовые метрики
 
 Status: Accepted
 
@@ -6,77 +6,56 @@ Status: Accepted
 
 Prometheus часто вызывает `/metrics`.
 
-Если каждый scrape будет делать тяжёлые SQL-запросы в PostgreSQL, мониторинг сам
-начнёт грузить рабочую БД.
+Если каждый вызов будет делать тяжёлые SQL-запросы, мониторинг начнёт грузить
+рабочую БД.
 
-Опасные запросы для scrape path:
+Нельзя делать внутри `/metrics`:
 
 - `COUNT`;
 - `MIN`;
 - grouping;
-- backlog queries;
-- age queries по рабочим таблицам.
-
-При этом операционные gauge-метрики нужны:
-
-- calls by status;
-- outbox depth;
-- oldest pending outbox age;
-- active reservations;
-- DLQ depth;
-- queue depth.
+- поиск backlog;
+- расчёт возраста строк.
 
 ## Решение
 
-`/metrics` не ходит в рабочие PostgreSQL tables.
+`/metrics` не ходит в рабочие таблицы PostgreSQL.
 
-HTTP endpoint только читает уже готовые Prometheus series из
-`PrometheusMetricsStore` и отдаёт их наружу.
+Он только читает готовые значения из `PrometheusMetricsStore`.
 
-Тяжёлые агрегации делает отдельная controlled job:
-
-```bash
-php artisan calls:metrics:snapshot
-```
-
-Scheduler запускает этот command отдельно от Prometheus scrape.
-
-## Как добавлять новые метрики
-
-Если новая метрика требует SQL aggregation, её нельзя добавлять в
-`MetricsController`.
-
-Её надо добавлять в snapshot flow:
+Тяжёлые значения считает команда:
 
 ```bash
 php artisan calls:metrics:snapshot
 ```
 
-Простое правило:
+Scheduler запускает её отдельно.
 
-- runtime counters/timings можно писать сразу в metrics store;
-- тяжёлые gauges по БД считаются snapshot command-ом;
-- `/metrics` только рендерит готовый кеш.
+## Новые метрики
 
-## Что нельзя делать
+Если метрика требует SQL aggregation, добавляйте её в
+`calls:metrics:snapshot`, не в `MetricsController`.
 
-- Нельзя выполнять `COUNT`, `MIN`, grouping или age queries внутри `/metrics`.
-- Нельзя превращать Prometheus scrape в нагрузочный тест PostgreSQL.
-- Нельзя считать stale gauges нормой: если scheduler умер, это отдельная
-  operational problem.
+Правило:
+
+- counters и timings можно писать сразу;
+- gauges по БД считает snapshot;
+- `/metrics` только отдаёт готовый текст.
+
+## Нельзя
+
+- Делать `COUNT`, `MIN`, grouping или age queries в `/metrics`.
+- Создавать нагрузку на PostgreSQL каждым scrape.
+- Игнорировать старые gauges, если scheduler упал.
 
 ## Минусы
 
-- Gauge-метрики не real-time. Они свежие настолько, насколько часто работает
-  `calls:metrics:snapshot`.
-- Нужно мониторить scheduler/process health.
-- При падении snapshot job `/metrics` продолжит отдавать старые значения.
+- Gauges не real-time.
+- Нужно следить за scheduler.
+- Если snapshot job упала, `/metrics` отдаст старые значения.
 
-## Что отклонили
+## Отклонили
 
-- SQL aggregation прямо в `/metrics`: monitoring станет источником нагрузки на
-  рабочую БД.
-- Только внешний exporter: возможно позже, но сейчас в сервисе уже есть snapshot
-  command и Prometheus renderer.
-- Не отдавать backlog/depth gauges: без них хуже видно outbox/DLQ, retry storm и
-  stuck reservations.
+- SQL прямо в `/metrics`.
+- Только внешний exporter.
+- Не отдавать depth/backlog gauges.

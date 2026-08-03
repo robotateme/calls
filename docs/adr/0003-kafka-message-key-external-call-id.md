@@ -4,17 +4,12 @@ Status: Accepted
 
 ## Проблема
 
-Calls получает и отправляет Kafka messages по звонку.
+Для одного звонка порядок сообщений важен.
 
-Для одного звонка порядок важен:
+Нельзя, чтобы `operator_dialing`, `bridge_established`, no-answer и hangup одного
+звонка разъехались по разным Kafka partitions.
 
-- сначала надо зарегистрировать incoming call;
-- потом можно применять Telephony facts;
-- `operator_dialing` должен относиться к текущей попытке назначения;
-- retry/no-answer/drop/bridge events не должны перемешиваться между Kafka
-  partitions.
-
-Стабильный business key звонка - `external_call_id`.
+Стабильный ключ звонка - `external_call_id`.
 
 ## Решение
 
@@ -24,50 +19,45 @@ Calls получает и отправляет Kafka messages по звонку.
 key = external_call_id
 ```
 
-Это относится к:
+Это касается:
 
 - incoming facts;
 - Telephony facts;
-- outgoing Telephony commands из outbox.
+- outgoing Telephony commands.
 
-## Проверка consumer-а
+## Проверка
 
-Если Kafka message key передан, consumer проверяет:
+Если Kafka key передан, consumer проверяет:
 
 ```text
 message key == payload.external_call_id
 ```
 
-Если значения разные, это contract violation.
+Если не совпало, сообщение идёт в DLQ.
 
-Такое сообщение нельзя молча обрабатывать. Его надо отправить в DLQ.
+## Почему
 
-## Почему это важно
+Kafka держит порядок внутри partition. Один key даёт одну partition для одного
+звонка.
 
-Kafka сохраняет порядок сообщений внутри одной partition. Чтобы события одного
-call попали в одну partition, у них должен быть один key.
+`external_call_id` подходит, потому что это id звонка, а не id отдельного
+сообщения.
 
-`external_call_id` подходит, потому что это business key звонка, а не технический
-id отдельного сообщения.
+## Нельзя
 
-## Что нельзя делать
-
-- Нельзя использовать `operator_id` как Kafka key.
-- Нельзя использовать `command_id` или `message_id` как Kafka key для call flow.
-- Нельзя отправлять сообщения без key, если они относятся к call flow.
-- Нельзя обрабатывать mismatch key/payload как нормальное событие.
+- Использовать `operator_id` как Kafka key.
+- Использовать `command_id` или `message_id` как key для событий звонка.
+- Отправлять события звонка без key.
+- Обрабатывать mismatch key/payload как нормальное событие.
 
 ## Минусы
 
-- Producer обязан знать и ставить `external_call_id`.
-- Ошибка producer-а с неправильным key станет DLQ record.
-- Масштабирование идёт по partitions, но один call остаётся внутри одной
-  partition.
+- Producer обязан ставить `external_call_id`.
+- Ошибка producer-а станет DLQ record.
+- Один звонок остаётся внутри одной partition.
 
-## Что отклонили
+## Отклонили
 
-- Key по `operator_id`: при retry или смене оператора события одного call могут
-  попасть в разные partitions.
-- Key по `command_id`/`message_id`: это технические ids, они ломают ordering
-  одного business flow.
-- Без key: Kafka не гарантирует порядок одного call между partitions.
+- Key по `operator_id`.
+- Key по `command_id`/`message_id`.
+- Сообщения без key.

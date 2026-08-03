@@ -1,18 +1,16 @@
 # Диаграммы
 
-Исходники PlantUML и PNG лежат в [docs/diagrams](diagrams/).
-
-## Список
+PlantUML-исходники лежат в [docs/diagrams](diagrams/).
 
 - [Регистрация входящего звонка](diagrams/01-incoming-call-registration.puml)
 - [Поиск оператора](diagrams/02-operator-search.puml)
 - [События от телефонии](diagrams/03-telephony-events.puml)
-- [Публикация telephony outbox](diagrams/04-telephony-outbox-publisher.puml)
-- [Машина состояний звонка](diagrams/05-call-state-machine.puml)
+- [Публикация outbox](diagrams/04-telephony-outbox-publisher.puml)
+- [Статусы звонка](diagrams/05-call-state-machine.puml)
 
-PNG-превью собраны в [docs/diagrams/README.md](diagrams/README.md).
+PNG-превью: [docs/diagrams/README.md](diagrams/README.md).
 
-## Перегенерация
+Перегенерировать:
 
 ```bash
 plantuml -tpng docs/diagrams/*.puml

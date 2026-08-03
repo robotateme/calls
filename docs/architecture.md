@@ -1,167 +1,155 @@
 # Архитектура
 
-Calls построен как hexagonal Laravel-сервис: бизнес-решения живут в Domain и
-Application, Laravel/БД/Kafka/Redis остаются adapter-ами.
+Calls разделён на слои. Бизнес-правила не должны зависеть от Laravel.
 
 ## Слои
 
-- `src/Domain` - framework-free domain objects, value objects и domain events.
-- `src/Application` - use cases, commands и ports.
-- `src/Infrastructure` - Laravel/database/queue/Kafka adapters.
-- `app` - Laravel wiring: jobs, providers, console/HTTP entrypoints.
+- `src/Domain` - статусы, правила звонка, простые объекты-значения.
+- `src/Application` - обработчики команд и интерфейсы к внешнему миру.
+- `src/Infrastructure` - БД, Redis, Kafka, метрики.
+- `app` - Laravel jobs, providers, HTTP и console wiring.
 
-Границы:
+Правила:
 
 - `Domain` не импортирует Laravel, `app`, `Application`, `Infrastructure`.
-- `Application` зависит от `Domain` и application ports, но не от Laravel и
-  Infrastructure.
-- `Infrastructure` реализует application ports и может использовать Laravel.
-- Runtime config (`config()`, `env()`) держится в `app` или `Infrastructure`.
+- `Application` не зависит от Laravel и конкретной БД/Kafka.
+- `Infrastructure` может использовать Laravel и реализует интерфейсы
+  `Application`.
+- `config()` и `env()` остаются в `app` или `Infrastructure`.
 
-Архитектурные ограничения проверяются тестом
-`tests/Unit/ArchitectureBoundaryTest.php`.
+Это проверяет `tests/Unit/ArchitectureBoundaryTest.php`.
 
-## Области Application
+## Области
 
-- `Application\Calls` - lifecycle звонка до `connected`, state machine и команды
-  обработки.
-- `Application\Clients` - read-side lookup клиента по телефону.
-- `Application\Operators` - локальная reservation оператора на время назначения.
-- `Application\Telephony` - outbox commands и delivery ports.
-- `Application\Shared` - transaction, queue, event bus, Kafka consumer, metrics,
-  DLQ.
+- `Application\Calls` - звонок до `connected`.
+- `Application\Clients` - поиск клиента по телефону.
+- `Application\Operators` - локальная бронь оператора.
+- `Application\Telephony` - команды в `telephony_outbox`.
+- `Application\Shared` - транзакции, очередь, Kafka, DLQ, метрики.
 
-## Правила Repository
+## Репозитории
 
-Repository-порты для Application возвращают только:
+Интерфейсы репозиториев в `Application` возвращают только:
 
-- domain aggregate/model/value object;
+- доменный объект или объект-значение;
 - `null`;
 - `void`;
-- `list<Domain\...>`.
+- список доменных объектов.
 
-Они не возвращают Eloquent models, Laravel collections, raw arrays, DTO,
-query-result classes, `stdClass` или scalar ids. Если application-слою нужен id,
-repository возвращает VO (`CallId`, `ClientId`, `OperatorId`) или domain model.
+Они не возвращают Eloquent, Laravel collections, raw arrays, DTO, `stdClass` или
+голые ids.
 
-Eloquent models считаются persistence records. Raw DB scalars собираются в domain
-VO внутри `Infrastructure\*\Persistence\*Mapper`.
+Eloquent и строки БД - только формат хранения. В доменные объекты они собираются внутри
+`Infrastructure\*\Persistence\*Mapper`.
 
-## Flow звонка
+## Звонок
 
-1. Kafka fact регистрирует входящий звонок через
-   `RegisterIncomingCallHandler`.
-2. `ProcessIncomingCallJob` делегирует обработку в
-   `ProcessIncomingCallHandler`.
-3. Handler в одной transaction меняет call, резервирует оператора и пишет
-   Telephony command в `telephony_outbox`.
-4. Outbox publisher отправляет command в Kafka.
-5. Telephony возвращает facts через Kafka.
-6. `HandleKafkaCallFactHandler` валидирует record, маппит его в application
-   command или пишет poison record в DLQ.
+1. Kafka-сообщение создаёт `call`.
+2. `ProcessIncomingCallJob` вызывает `ProcessIncomingCallHandler`.
+3. Обработчик в транзакции ищет клиента, ищет оператора, меняет статус и пишет
+   команду в `telephony_outbox`.
+4. Publisher отправляет команду из `telephony_outbox` в Kafka.
+5. Telephony присылает факты обратно в Kafka.
+6. `HandleKafkaCallFactHandler` проверяет сообщение и вызывает нужный обработчик.
+7. Если сообщение плохое, оно попадает в `dead_letter_messages`.
 
-Детальный call flow описан в [solution.md](solution.md), Kafka payloads - в
-[kafka-contracts.md](kafka-contracts.md).
+Подробности: [solution.md](solution.md) и [kafka-contracts.md](kafka-contracts.md).
 
-## Машина состояний
+## Статусы
 
-Статусы:
+- `new` - звонок записан.
+- `waiting` - ждём следующую попытку поиска оператора.
+- `assignment_requested` - оператор забронирован, команда записана.
+- `operator_dialing` - Telephony звонит оператору.
+- `connected` - клиент и оператор соединены.
+- `missed`, `callback_missed`, `hangup_on_retry` - финал без соединения.
 
-- `new` - call зарегистрирован;
-- `waiting` - ждём следующую попытку поиска оператора;
-- `assignment_requested` - оператор зарезервирован, command записан в outbox;
-- `operator_dialing` - Telephony дозванивается до оператора;
-- `connected` - соединение установлено, ответственность Calls завершена;
-- `missed`, `callback_missed`, `hangup_on_retry` - финальные статусы policy.
+Переходы:
 
-Основные переходы:
+- `new/waiting -> assignment_requested`;
+- `assignment_requested -> operator_dialing`;
+- `assignment_requested/operator_dialing -> connected`;
+- `assignment_requested/operator_dialing -> waiting|final`;
+- `new/waiting/assignment_requested/operator_dialing -> final`.
 
-- `new/waiting -> assignment_requested` при найденном операторе;
-- `assignment_requested -> operator_dialing` по Kafka fact `operator_dialing`;
-- `assignment_requested/operator_dialing -> connected` по
-  `bridge_established`;
-- `assignment_requested/operator_dialing -> waiting|final` по no-answer/drop;
-- `new/waiting/assignment_requested/operator_dialing -> final` по hangup policy.
-
-После `connected` Calls не моделирует разговор, hangup, SIP state и дальнейшую
-доступность оператора. Поздние facts после `connected` не меняют бизнес-статус
-call.
-
-Диаграммы: [diagrams.md](diagrams.md).
+После `connected` Calls больше не меняет бизнес-статус звонка. Разговор и
+доступность оператора после соединения принадлежат другим системам.
 
 ## Telephony outbox
 
-Исходящие команды в Telephony не отправляются напрямую из use case. Они пишутся
-в `telephony_outbox` в той же DB transaction, где меняется state machine.
+Calls не отправляет команды напрямую. Он пишет их в `telephony_outbox` в той же
+транзакции, где меняет `calls`.
 
-Команды:
+Типы команд:
 
 - `call_assignment_requested`;
 - `call_assignment_canceled`;
 - `operator_search_retry_scheduled`;
 - `operator_search_exhausted`.
 
-Delivery lifecycle:
+Статусы outbox:
 
 - `pending`;
 - `processing`;
 - `published`;
 - `failed`.
 
-Publisher claim-ит due records с row lock/`SKIP LOCKED`, пишет
-`processing_started_at`, отправляет Kafka message и помечает результат.
-`calls:telephony-outbox:requeue-stale` возвращает зависшие `processing` records
-в `pending`. Повторная публикация безопасна через `idempotency_key`.
+Publisher забирает готовые записи с row lock/`SKIP LOCKED`, отправляет в Kafka и
+пишет результат. Зависшие `processing` записи возвращаются командой
+`calls:telephony-outbox:requeue-stale`.
 
-## Reservation оператора
+Повторная отправка безопасна, потому что есть `idempotency_key`.
 
-Calls владеет только краткой локальной reservation:
+## Оператор
+
+Calls хранит только локальную бронь:
 
 - `operators.reserved_call_id`;
 - `operators.reserved_at`.
 
-Фактическая доступность `available/afk` считается внешней read model. Calls не
-выставляет `available=true` при освобождении reservation, потому что после
-`connected` оператор может быть занят разговором.
+`available` и `afk` приходят извне. Calls не ставит `available=true`, когда
+снимает бронь: после `connected` оператор может быть занят разговором.
 
-Allocation выбирает только операторов с `available=true`, `afk=false` и
-`reserved_call_id is null`. Release очищает reservation только если
-`reserved_call_id` совпадает с текущим call id.
+Оператор подходит, если:
 
-## Надежность
+- `available=true`;
+- `afk=false`;
+- `reserved_call_id is null`.
 
-- Kafka ingress повторяемый; handlers идемпотентны по явному business key.
-- `external_call_id` уникален в `calls`.
-- Critical state change + Telephony command фиксируются одной DB transaction.
-- Retry поиска оператора имеет attempts, delay, jitter, cap и final outcome.
-- Poison Kafka records идут в `dead_letter_messages`.
-- Late facts по старой попытке становятся no-op, если `operator_id` или
-  `assignment_attempt` не совпадают с текущим assignment.
-- Перед side effect-ом handler повторно проверяет, что aggregate processable.
+Бронь снимается только если `reserved_call_id` равен текущему `call_id`.
 
-## Ownership
+## Надёжность
 
-| Компонент | Ответственность | Не делает |
+- Повторное Kafka-сообщение не должно ломать состояние.
+- `external_call_id` уникален.
+- Важная смена статуса и команда Telephony пишутся в одной транзакции.
+- Retry поиска оператора имеет лимит, задержку, jitter и финальный статус.
+- Плохие Kafka-сообщения идут в `dead_letter_messages`.
+- Старые факты по другой попытке становятся no-op.
+- Перед внешним действием handler заново проверяет состояние звонка.
+
+## Кто за что отвечает
+
+| Часть | Делает | Не делает |
 |---|---|---|
-| Calls | Регистрирует call, хранит state machine до `connected`, выбирает/резервирует оператора, пишет Telephony commands, применяет Telephony facts | Не звонит оператору сам, не управляет SIP и разговором после `connected` |
-| Telephony outbox publisher | Доставляет records из `telephony_outbox` в Kafka | Не принимает бизнес-решения |
-| Redis queue | Внутренняя очередь jobs Calls | Не является межсервисной шиной |
-| DLQ | Хранит poison Kafka records для ручного разбора | Не заменяет inbox |
-| Telephony | Звонит оператору, соединяет клиента и оператора, публикует facts | Не выбирает оператора и не хранит lifecycle Calls |
-| Operator Availability | Владеет фактической доступностью оператора | Не хранит call state machine |
-| Clients | Даёт lookup клиента | Не участвует в назначении оператора |
+| Calls | Ведёт звонок до `connected`, выбирает оператора, пишет команды Telephony | Не управляет разговором после `connected` |
+| Outbox publisher | Отправляет `telephony_outbox` в Kafka | Не принимает бизнес-решения |
+| Redis queue | Запускает внутренние jobs | Не заменяет Kafka |
+| DLQ | Хранит плохие Kafka-сообщения | Не чинит их автоматически |
+| Telephony | Звонит оператору и соединяет разговор | Не выбирает оператора |
+| Operator Availability | Знает реальную доступность оператора | Не хранит статус звонка Calls |
+| Clients | Даёт клиента по телефону | Не участвует в назначении |
 
-## Runtime процессы
+## Процессы
 
-Production processes перечислены в [production.md](production.md). Минимально
-нужны scheduler, workers `calls`/`calls-retry`, Kafka consumers и outbox
-publisher.
+Нужны scheduler, queue workers, Kafka consumers и outbox publisher. Команды
+перечислены в [production.md](production.md).
 
 ## ADR
 
-Принятые архитектурные решения вынесены в [adr/README.md](adr/README.md):
+Решения записаны в [adr/README.md](adr/README.md):
 
-- локальная reservation оператора;
-- row locks и `SKIP LOCKED` для конкурентных workers;
-- Kafka message key = `external_call_id`;
-- `/metrics` отдаёт кешированный snapshot.
+- локальная бронь оператора;
+- row locks и `SKIP LOCKED`;
+- Kafka key = `external_call_id`;
+- `/metrics` читает готовые метрики.

@@ -1,47 +1,35 @@
-# Load Testing
+# Нагрузка
 
-## Local JSONL Smoke
+## Быстрая локальная проверка
 
-JSONL smoke проверяет consumer boundary без настоящего Kafka client:
+JSONL-режим проверяет consumer без настоящего Kafka client:
 
 ```bash
 php tools/load/generate-incoming-calls-jsonl.php 1000 local \
   | php artisan calls:kafka:consume incoming-calls --limit=1000 --timeout-ms=5000
 ```
 
-После прогона проверить:
+После прогона:
 
 ```bash
 php artisan calls:metrics:snapshot
 php artisan calls:dead-letter:list --limit=20
 ```
 
-## Local Stress/Soak Runner
+## Готовые профили
 
-Повторяемый runner для CI и локальных проверок поддерживает большие профили:
-
-| Профиль | Параметры по умолчанию | Назначение |
+| Профиль | Что запускает | Для чего |
 |---|---|---|
-| `smoke` | 100 incoming calls, 1 `calls` worker, 1 outbox publisher, 150 operators | Быстро проверить сам runner, queue/outbox drain и отчетность |
-| `stress-large` | 250k incoming calls, no producer throttle, 16 `calls` workers, 4 outbox publishers, 300k operators | Найти throughput ceiling, DB/Redis/outbox bottleneck и backlog under burst |
-| `soak-large` | 3 часа, 50 rps, 8 `calls` workers, 2 outbox publishers, 750k operators | Проверить стабильность, утечки, рост latency/backlog/DLQ на длинном прогоне |
-| `custom` | env-переменные ниже | Ручная настройка под машину или эксперимент |
+| `smoke` | 100 звонков, 1 worker, 1 outbox publisher, 150 операторов | быстро проверить весь путь |
+| `stress-large` | 250k звонков, 16 workers, 4 publishers, 300k операторов | найти предел машины |
+| `soak-large` | 3 часа, 50 rps, 8 workers, 2 publishers, 750k операторов | проверить долгую работу |
+| `custom` | env-переменные | ручная настройка |
 
-Smoke-проверка runner'а:
+Запуск:
 
 ```bash
 LOAD_PROFILE=smoke bash tools/load/run-jsonl-load.sh
-```
-
-Большой stress локально:
-
-```bash
 LOAD_PROFILE=stress-large bash tools/load/run-jsonl-load.sh
-```
-
-Большой soak локально:
-
-```bash
 LOAD_PROFILE=soak-large bash tools/load/run-jsonl-load.sh
 ```
 
@@ -53,7 +41,7 @@ make load-stress-large
 make load-soak-large
 ```
 
-Custom-пример:
+Custom:
 
 ```bash
 LOAD_PROFILE=custom \
@@ -66,13 +54,13 @@ LOAD_FAKE_TELEPHONY_PRODUCER=1 \
 bash tools/load/run-jsonl-load.sh
 ```
 
-Если нужен custom-запуск через Sail, переменные нужно передавать внутрь контейнера:
+Custom через Sail:
 
 ```bash
 ./vendor/bin/sail bash -lc 'LOAD_PROFILE=custom LOAD_MODE=stress LOAD_COUNT=10000 bash tools/load/run-jsonl-load.sh'
 ```
 
-Soak-профиль ограничивается временем:
+Ограничение по времени:
 
 ```bash
 LOAD_MODE=soak \
@@ -81,49 +69,53 @@ LOAD_RATE_PER_SECOND=100 \
 bash tools/load/run-jsonl-load.sh
 ```
 
-Runner:
+## Что делает скрипт
 
-- подготавливает load dataset с операторами через `tools/load/prepare-dataset.php`;
-- запускает workers для `calls`, `calls-retry` и fake Telephony outbox publisher;
-- генерирует JSONL batches и отдаёт их в `calls:kafka:consume`;
-- пишет отчёты в `storage/load-reports/<prefix>`;
-- во время больших профилей пишет периодические `snapshot-*.json` и `progress.env`;
-- завершает прогон ошибкой, если остался queue/outbox backlog или появились unresolved DLQ records.
+- Готовит операторов через `tools/load/prepare-dataset.php`.
+- Запускает workers `calls` и `calls-retry`.
+- Запускает fake Telephony outbox publisher.
+- Генерирует JSONL и отдаёт в `calls:kafka:consume`.
+- Пишет отчёты в `storage/load-reports/<prefix>`.
+- Для больших прогонов пишет `snapshot-*.json` и `progress.env`.
+- Завершается с ошибкой, если остались queue/outbox backlog или unresolved DLQ.
 
 ## GitHub Actions
 
-В CI есть два workflow:
+Есть две GitHub Actions проверки:
 
-- `CI` — быстрый validation на PR/push: Composer validate, Pint, PHPStan, PHPUnit.
-- `Load Test` — ручной `workflow_dispatch` для `smoke`, `stress-large`, `soak-large` и `custom`, без деплоя.
+- `CI` - Composer validate, Pint, PHPStan, PHPUnit.
+- `Load Test` - ручной запуск `smoke`, `stress-large`, `soak-large`, `custom`.
 
-`Load Test` использует PostgreSQL и Redis service containers, JSONL consumer adapter и fake Telephony producer. Это не заменяет production Kafka replay, но стабильно проверяет consumer/queue/PostgreSQL/outbox контур в GitHub runner.
+`Load Test` использует PostgreSQL и Redis service containers, JSONL consumer и
+fake Telephony producer. Это проверяет код, но не заменяет повторную обработку
+через реальную Kafka.
 
-Для длительного `soak-large` лучше выбирать `self-hosted` runner, если нужен прогон дольше лимитов GitHub-hosted окружения или более мощная машина. В workflow можно менять `timeout_minutes`, batch size, workers, outbox publishers и custom rate.
+Для длинного `soak-large` лучше self-hosted runner.
 
-## Production Kafka Load
+## Production-нагрузка
 
-Для production-нагрузки нужен реальный Kafka producer или replay из staging topic.
+Для production нужен настоящий Kafka producer или повторная обработка staging
+topic.
 
-Обязательные сценарии:
+Сценарии:
 
-| Сценарий | Что проверяем |
+| Сценарий | Что смотреть |
 |---|---|
-| Массовые входящие звонки | consumer lag, insert latency, Redis queue depth |
-| Нет доступных операторов | retry storm, `calls-retry`, outbox retry scheduled |
-| Массовый `operator_no_answer` | release reservation, retry/final policy |
-| Массовый `hangup` до соединения | cancel assignment, release reservation |
-| Поздние facts после `connected` | no-op state machine |
-| Telephony lag | stale reservation cleanup, outbox cancel flow |
-| Некорректная schema version | DLQ depth and alerting |
+| Много входящих звонков | Kafka lag, insert latency, Redis queue depth |
+| Нет операторов | retry queue, outbox retry commands |
+| Много `operator_no_answer` | снятие брони, retry/final |
+| `hangup` до соединения | cancel assignment, снятие брони |
+| Поздние facts после `connected` | no-op |
+| Telephony lag | старые брони, outbox cancel |
+| Битый `schema_version` | DLQ |
 
-Минимальные метрики для отчёта:
+Минимум для отчёта:
 
-- p50/p95/p99 processing latency;
+- p50/p95/p99 latency;
 - Kafka consumer lag;
 - Redis queue depth;
-- PostgreSQL lock wait;
-- `telephony_outbox.depth` by status;
-- `dead_letter.depth` by reason;
-- CPU/memory per worker;
-- error rate по logs.
+- PostgreSQL slow queries/lock wait;
+- `telephony_outbox_current{status}`;
+- `dead_letter_current`;
+- CPU/memory workers;
+- error rate в логах.

@@ -1,8 +1,8 @@
 # Диаграммы
 
-Исходники PlantUML и PNG лежат рядом.
+PlantUML и PNG лежат рядом.
 
-Перегенерация:
+Обновить PNG:
 
 ```bash
 plantuml -tpng docs/diagrams/*.puml
@@ -16,6 +16,6 @@ plantuml -tpng docs/diagrams/*.puml
 
 ![События от телефонии](./03-telephony-events.png)
 
-![Публикация telephony outbox](./04-telephony-outbox-publisher.png)
+![Публикация outbox](./04-telephony-outbox-publisher.png)
 
-![Машина состояний звонка](./05-call-state-machine.png)
+![Статусы звонка](./05-call-state-machine.png)

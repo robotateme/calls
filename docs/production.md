@@ -1,19 +1,19 @@
 # Production
 
-## Обязательные процессы
+## Процессы
 
-В production сервису нужны отдельные long-running процессы:
+В production должны быть запущены отдельные процессы:
 
 | Процесс | Команда | Масштабирование |
 |---|---|---|
-| Scheduler | `php artisan schedule:work` | 1 replica на deployment |
-| Calls queue | `php artisan queue:work redis --queue=calls --tries=1 --timeout=0` | горизонтально |
-| Calls retry queue | `php artisan queue:work redis --queue=calls-retry --tries=1 --timeout=0` | горизонтально |
-| Incoming calls consumer | `php artisan calls:kafka:consume incoming-calls --group=calls-incoming --source=incoming-calls-consumer --limit=1000 --timeout-ms=1000` | по partition count |
-| Telephony facts consumer | `php artisan calls:kafka:consume telephony.facts --group=calls-telephony-facts --source=telephony-facts-consumer --limit=1000 --timeout-ms=1000` | по partition count |
-| Outbox publisher | `php artisan calls:telephony-outbox:publish --limit=100` | можно несколько replicas, claim защищён lock/skip locked |
+| Scheduler | `php artisan schedule:work` | 1 на deployment |
+| Calls queue | `php artisan queue:work redis --queue=calls --tries=1 --timeout=0` | можно несколько |
+| Calls retry queue | `php artisan queue:work redis --queue=calls-retry --tries=1 --timeout=0` | можно несколько |
+| Incoming calls consumer | `php artisan calls:kafka:consume incoming-calls --group=calls-incoming --source=incoming-calls-consumer --limit=1000 --timeout-ms=1000` | по числу partitions |
+| Telephony facts consumer | `php artisan calls:kafka:consume telephony.facts --group=calls-telephony-facts --source=telephony-facts-consumer --limit=1000 --timeout-ms=1000` | по числу partitions |
+| Outbox publisher | `php artisan calls:telephony-outbox:publish --limit=100` | можно несколько |
 
-Scheduler уже запускает:
+Scheduler запускает:
 
 - `calls:telephony-outbox:publish`;
 - `calls:telephony-outbox:requeue-stale`;
@@ -21,12 +21,12 @@ Scheduler уже запускает:
 - `calls:metrics:snapshot`;
 - `calls:dead-letter:prune-resolved`.
 
-Если outbox throughput высокий, `calls:telephony-outbox:publish` можно вынести в
-отдельный горизонтально масштабируемый process, оставив scheduler как страховку.
+Если outbox растёт быстрее, чем scheduler успевает публиковать, запускайте
+несколько отдельных outbox publishers.
 
-## Kafka adapters
+## Kafka
 
-Local/default:
+Локально:
 
 ```env
 KAFKA_CONSUMER_ADAPTER=jsonl
@@ -43,18 +43,18 @@ KAFKA_AUTO_OFFSET_RESET=earliest
 KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 ```
 
-Runtime image должен содержать PHP extension `php-rdkafka`. Если расширение не
-установлено, `rdkafka` adapters падают fail-fast.
+Для `rdkafka` нужен PHP extension `php-rdkafka`. Если его нет, сервис должен
+упасть при старте Kafka-адаптера.
 
-## Runtime image
+## Docker-образ
 
-В репозитории есть production Dockerfile:
+Собрать:
 
 ```bash
 docker build -f docker/production/Dockerfile -t calls:production .
 ```
 
-Он устанавливает:
+В образе есть:
 
 - PHP 8.4 CLI;
 - `pdo_pgsql`, `pcntl`, `sockets`, `opcache`;
@@ -62,26 +62,25 @@ docker build -f docker/production/Dockerfile -t calls:production .
 - `rdkafka`;
 - `supervisor`.
 
-Default `CMD` запускает `supervisord` с конфигом
-`docker/production/supervisord.conf`.
+По умолчанию запускается `docker/production/supervisord.conf`.
 
-Для Kubernetes предпочтительнее запускать один process на container и override-ить
-command из таблицы выше. Supervisor-конфиг оставлен как готовый single-container
-вариант для VM/Compose.
+В Kubernetes лучше запускать один процесс на контейнер и задавать команду из
+таблицы выше.
 
 ## БД и Redis
 
 PostgreSQL:
 
-- применять migrations до запуска workers/consumers;
-- следить за lock wait, slow queries, размером `calls`, `telephony_outbox`, `dead_letter_messages`;
-- для больших объёмов включить архивирование или partitioning завершённых calls/outbox.
+- применить migrations до workers/consumers;
+- следить за slow queries и lock wait;
+- следить за размером `calls`, `telephony_outbox`, `dead_letter_messages`;
+- для больших объёмов архивировать завершённые звонки и published outbox.
 
 Redis:
 
-- использовать отдельные очереди `calls` и `calls-retry`;
-- мониторить queue depth и latency;
-- retry storm сглаживается jitter/cap, но при деградации операторов нужно смотреть backlog.
+- очереди `calls` и `calls-retry` должны быть раздельными;
+- следить за queue depth и latency;
+- при проблемах с операторами смотреть рост retry queue.
 
 ## DLQ
 
@@ -94,25 +93,27 @@ php artisan calls:dead-letter:resolve 123 --note="fixed upstream schema"
 php artisan calls:dead-letter:prune-resolved --older-than-days=30
 ```
 
-DLQ рост означает сломанный contract, несовместимый deploy или ошибку upstream
-producer-а. Это не нормальный backlog.
+Рост DLQ - это проблема сообщения, deploy-а или upstream producer-а. Это не
+нормальная очередь задач.
 
 ## Метрики
 
-Application пишет counters/timings/gauges через `Metrics` port.
-
-HTTP endpoint для scrape:
+Endpoint:
 
 ```text
 GET /metrics
 ```
 
-`/metrics` должен оставаться дешёвым scrape endpoint-ом: он рендерит
-кешированные series и не выполняет `COUNT`, `MIN` или grouping по PostgreSQL на
-каждый scrape. Агрегации рабочих таблиц выполняет `calls:metrics:snapshot`.
-Решение зафиксировано в [ADR-0004](adr/0004-metrics-scrape-from-cache.md).
+`/metrics` только отдаёт готовые значения. Он не делает `COUNT`, `MIN` и
+grouping по PostgreSQL. Такие запросы делает:
 
-Обязательные внешние метрики:
+```bash
+php artisan calls:metrics:snapshot
+```
+
+См. [ADR-0004](adr/0004-metrics-scrape-from-cache.md).
+
+Метрики Calls:
 
 - `calls_received_total`;
 - `calls_deduplicated_total`;
@@ -125,14 +126,17 @@ GET /metrics
 - `telephony_outbox_current{status}`;
 - `dead_letter_current`;
 - `oldest_waiting_call_age_seconds`;
-- `oldest_outbox_message_age_seconds`;
-- Kafka consumer lag по consumer group;
-- Kafka broker produce/fetch latency;
-- PostgreSQL lock wait и slow queries;
+- `oldest_outbox_message_age_seconds`.
+
+Снаружи также нужны:
+
+- Kafka consumer lag;
+- Kafka produce/fetch latency;
+- PostgreSQL slow queries и lock wait;
 - Redis queue depth/latency;
 - PHP worker restarts и memory;
 - DLQ depth by reason;
-- outbox pending/processing/failed depth.
+- outbox depth by status.
 
 PromQL smoke после deploy-а:
 
@@ -152,21 +156,21 @@ oldest_waiting_call_age_seconds
 oldest_outbox_message_age_seconds
 ```
 
-## Rollout
+## Deploy
 
-Порядок deploy-а:
+Порядок:
 
 1. Migrations.
-2. Новая версия app.
+2. App image.
 3. Scheduler.
 4. Queue workers.
 5. Kafka consumers.
-6. Outbox publisher replicas.
+6. Outbox publishers.
 
-Rollback:
+Откат:
 
 - остановить consumers;
-- остановить outbox publisher replicas;
+- остановить outbox publishers;
 - откатить app image;
-- не удалять DLQ/outbox records вручную;
+- не удалять outbox/DLQ вручную;
 - проверить `telephony_outbox.failed`, `dead_letter_messages`, Kafka lag.

@@ -1,229 +1,205 @@
 # Решение
 
-Документ фиксирует текущее поведение Calls: как звонок попадает в сервис, как
-выбирается оператор, что пишется в outbox и где заканчивается ответственность
-сервиса.
+Этот документ описывает, как Calls обрабатывает звонок.
 
-## Контекст
+## Главное
 
-Основной входящий поток - Kafka. HTTP не используется ни для входящего звонка,
-ни для команд в Telephony.
+- Входящие звонки приходят из Kafka, не по HTTP.
+- Один звонок определяется `external_call_id`.
+- Для одного звонка Kafka key тоже равен `external_call_id`.
+- Calls отвечает только до `connected`.
+- Все команды для Telephony сначала пишутся в `telephony_outbox`.
 
-Причины выбора Kafka:
+Подробные договоры Kafka: [kafka-contracts.md](kafka-contracts.md).
+Принятые решения: [adr/README.md](adr/README.md).
 
-- нужен durable log фактов и команд;
-- события одного звонка должны идти в порядке внутри partition по
-  `external_call_id`;
-- consumer groups дают независимых читателей: Calls, Telephony, audit/read
-  models;
-- replay нужен для восстановления после сбоев;
-- Calls не должен держать HTTP-запрос к Telephony в своей transaction.
+## Что уже есть
 
-Kafka contracts описаны в [kafka-contracts.md](kafka-contracts.md).
-Архитектурные решения по reservation, конкурентному claim, Kafka key и
-Prometheus scrape path зафиксированы в [adr/README.md](adr/README.md).
+- Регистрация звонка из Kafka.
+- Дедупликация по `external_call_id`.
+- Очередь `ProcessIncomingCallJob`.
+- Обработчик `ProcessIncomingCallHandler`.
+- Правила звонка в `Domain\Calls\Call`.
+- Локальная бронь оператора.
+- `telephony_outbox`.
+- JSONL consumer для локальных проверок.
+- `rdkafka` consumer/producer для production.
+- DLQ в `dead_letter_messages`.
+- Cleanup-команды для outbox, броней и DLQ.
+- `/metrics` и snapshot метрик.
 
-## Что реализовано
+## Путь звонка
 
-- Регистрация incoming call из Kafka через `RegisterIncomingCallHandler`.
-- Дедупликация по уникальному `external_call_id`.
-- Тонкий queue adapter `ProcessIncomingCallJob`.
-- Один use case `ProcessIncomingCallHandler` для первого поиска оператора и
-  retry.
-- Domain state machine в `Domain\Calls\Call`.
-- CQRS-порты для calls, clients, operators и telephony outbox.
-- Repository-порты возвращают Domain/VO, не Eloquent/DTO/scalars.
-- Локальная reservation оператора через `operators.reserved_call_id`.
-- Исходящие Telephony commands через transactional `telephony_outbox`.
-- Publisher outbox records в Kafka.
-- Kafka consumer boundary: JSONL adapter для smoke/test и `rdkafka` adapter для
-  production.
-- DLQ для poison Kafka records.
-- Recovery-команды для stale outbox records и expired reservations.
-- Metrics port и Prometheus endpoint `/metrics`.
+1. Kafka присылает `incoming_call_registered`.
+2. Calls создаёт `calls` со статусом `new`.
+3. Calls ставит job на обработку.
+4. Обработчик ищет клиента и оператора.
+5. Если оператор найден:
+   - Calls ставит бронь;
+   - переводит звонок в `assignment_requested`;
+   - пишет `call_assignment_requested` в `telephony_outbox`.
+6. Если оператора нет:
+   - правило звонка решает повтор или финал;
+   - Calls пишет `operator_search_retry_scheduled` или
+     `operator_search_exhausted`.
+7. Publisher отправляет outbox-команды в Kafka.
+8. Telephony присылает факты:
+   - `operator_dialing`;
+   - `bridge_established`;
+   - `operator_no_answer`;
+   - `operator_leg_dropped`;
+   - `hangup`.
+9. При `connected` Calls снимает бронь и заканчивает работу по звонку.
 
-## Flow звонка
+## Статусы
 
-1. Kafka fact регистрирует call с `external_call_id`, phone и retry policy.
-2. Calls ставит `ProcessIncomingCallJob`.
-3. Handler ищет клиента и доступного оператора.
-4. Если оператор найден, Calls резервирует его, переводит call в
-   `assignment_requested` и пишет `call_assignment_requested` в outbox.
-5. Если оператора нет, Domain решает retry или final status. Handler пишет
-   `operator_search_retry_scheduled` или `operator_search_exhausted`.
-6. Telephony получает command из Kafka и публикует facts обратно.
-7. Facts двигают state machine: dialing, connected, retry/final, hangup.
-8. При `connected` Calls освобождает локальную reservation и больше не ведёт
-   разговор.
-
-## Машина состояний
-
-Статусы:
-
-- `new`;
-- `waiting`;
-- `assignment_requested`;
-- `operator_dialing`;
-- `connected`;
-- `missed`;
-- `callback_missed`;
-- `hangup_on_retry`.
+- `new`
+- `waiting`
+- `assignment_requested`
+- `operator_dialing`
+- `connected`
+- `missed`
+- `callback_missed`
+- `hangup_on_retry`
 
 Переходы:
 
-- `new/waiting -> assignment_requested` при найденном операторе;
-- `assignment_requested -> operator_dialing` по Telephony fact
-  `operator_dialing`;
-- `assignment_requested/operator_dialing -> connected` по
-  `bridge_established`;
-- `assignment_requested/operator_dialing -> waiting|final` по no-answer/drop;
-- `new/waiting/assignment_requested/operator_dialing -> final` по hangup policy.
+- `new/waiting -> assignment_requested` - оператор найден;
+- `assignment_requested -> operator_dialing` - Telephony дозванивается;
+- `assignment_requested/operator_dialing -> connected` - мост установлен;
+- `assignment_requested/operator_dialing -> waiting` - попытка не удалась, ещё
+  можно повторить;
+- `assignment_requested/operator_dialing -> missed|callback_missed|hangup_on_retry`
+  - попытки закончились;
+- `new/waiting/assignment_requested/operator_dialing -> missed|callback_missed|hangup_on_retry`
+  - клиент повесил трубку до соединения.
 
-`operator_dialing` - внешний Kafka fact. Внутренний статус называется
-`operator_dialing`, потому что Telephony дозванивается до оператора, а не
-оператор звонит клиенту.
+`operator_dialing` - правильное имя статуса и Kafka fact. Старые варианты не
+используются.
 
-После `connected` события hangup/drop/no-answer для Calls становятся no-op или
-техническим audit/log. Жизненный цикл разговора принадлежит Telephony,
-SIP/call-client или отдельному сервису доступности операторов.
+После `connected` Calls не моделирует hangup, drop и разговор.
 
-## Retry и outbox
+## Retry
 
-Поиск оператора:
+Параметры приходят во входящем сообщении:
 
-- max attempts, retry delay и hangup policy приходят во входящем Kafka fact;
-- отсутствие оператора не является exception;
-- Domain outcome решает: retry или final;
-- Redis retry delay получает min delay, jitter и cap, чтобы не создавать retry
-  storm.
+- `operator_search_max_attempts`;
+- `operator_search_retry_delay_seconds`;
+- `operator_search_hangup_policy`.
 
-Outbox:
+Нет оператора - это обычный исход, не exception.
 
-- command пишется в той же DB transaction, где меняется call;
-- publisher claim-ит `pending` records и переводит их в `processing`;
-- stale `processing` records возвращаются в `pending`;
-- повторная публикация безопасна через `idempotency_key`.
+Redis retry может добавить min delay, jitter и cap. В Kafka-команду всё равно
+пишется исходная бизнес-задержка.
 
-Команды outbox:
+## Outbox
+
+Команда для Telephony и смена статуса пишутся в одной транзакции БД.
+
+Outbox-команды:
 
 - `call_assignment_requested`;
 - `call_assignment_canceled`;
 - `operator_search_retry_scheduled`;
 - `operator_search_exhausted`.
 
-## DLQ и consumer mapping
+Publisher:
 
-`HandleKafkaCallFactHandler` получает raw Kafka record, валидирует JSON,
-`type`, `schema_version`, `external_call_id` и Kafka key.
+- забирает `pending`;
+- ставит `processing`;
+- отправляет в Kafka;
+- ставит `published` или `failed`;
+- старые `processing` возвращаются в `pending`.
 
-Record уходит в DLQ при:
+Повторная отправка безопасна по `idempotency_key`.
 
-- invalid JSON/payload;
-- unknown type;
-- unsupported schema version;
-- contract violation;
-- handler failure.
+## DLQ
 
-DLQ хранится в `dead_letter_messages` и защищена `message_hash` от дублей. Это
-не inbox: inbox нужен отдельно, если источник перестанет гарантировать
-уникальность Kafka facts.
+`HandleKafkaCallFactHandler` проверяет:
 
-## Проблемы исходного решения
+- JSON;
+- `type`;
+- `schema_version`;
+- `external_call_id`;
+- Kafka key.
 
-Критические:
+В DLQ идут:
 
-- несколько workers могли выбрать одного оператора;
-- изменение БД и внешний side effect не были атомарны;
-- retry job мог повторить внешний side effect;
-- статус `assigned` выглядел как успешный финал без подтверждения Telephony.
+- битый JSON;
+- неправильный payload;
+- неизвестный `type`;
+- неподдержанный `schema_version`;
+- mismatch Kafka key и `external_call_id`;
+- ошибка handler-а.
 
-Важные:
+DLQ хранится в `dead_letter_messages`. Дубли режутся по `message_hash`.
 
-- отсутствие оператора было exception вместо бизнес-исхода;
-- job смешивал queue adapter, persistence, allocation и integration;
-- не было state machine для ожидания, дозвона, соединения и неудачного
-  назначения;
-- доступность оператора и reservation были смешаны.
+DLQ - не inbox. Inbox понадобится, если источник перестанет гарантировать
+уникальность фактов.
 
-Отложено:
+## Что было исправлено
 
-- inbox/event-id store, пока источник гарантирует уникальность facts;
-- schema registry;
-- выделение clients/operators в отдельные сервисы;
-- автоматический replay из DLQ;
-- сценарии разговора после `connected`.
+- Два workers могли выбрать одного оператора.
+- БД менялась отдельно от внешнего действия.
+- Retry мог повторить внешнее действие.
+- `assigned` выглядел как финал без подтверждения Telephony.
+- Отсутствие оператора было exception.
+- Доступность оператора и бронь были смешаны.
 
 ## Тесты
 
-Покрыты ключевые сценарии:
+Покрыто:
 
-- регистрация и дедупликация incoming call;
-- выбор оператора и запись outbox command;
-- отсутствие оператора, retry и exhausted outcome;
-- AFK/зарезервированные operators не участвуют в allocation;
-- late job после final status становится no-op;
-- Telephony facts `operator_dialing`, `bridge_established`,
-  `operator_no_answer`, `operator_leg_dropped`, `hangup`;
-- cancel assignment при hangup/timeout;
-- stale outbox requeue;
-- expired reservation compensation;
+- регистрация и дубль входящего звонка;
+- выбор оператора;
+- отсутствие оператора и retry;
+- финал после исчерпания попыток;
+- AFK и уже забронированные операторы;
+- поздние jobs после финала;
+- факты Telephony;
+- cancel assignment;
+- requeue зависшего outbox;
+- снятие старых броней;
 - DLQ list/resolve/prune;
-- metrics snapshot;
-- architecture boundary tests.
+- snapshot метрик;
+- границы слоёв.
 
-## Предположения и риски
+## Риски
 
-Предположения:
+- Если `external_call_id` нестабилен, дедупликация и порядок ломаются.
+- Если Kafka key не равен `external_call_id`, порядок одного звонка ломается.
+- Если facts начнут приходить дублями без гарантии уникальности, нужен inbox.
+- Рост DLQ значит проблему контракта, deploy-а или upstream producer-а.
+- Если Calls начнёт менять статус после `connected`, он выйдет за свою зону
+  ответственности.
 
-- Telephony даёт стабильный `external_call_id`.
-- Kafka key для call facts равен `external_call_id`.
-- Facts уникальны на стороне источника.
-- Telephony дедуплицирует commands по `idempotency_key`.
-- Shared DB для clients/operators временно допустима как read model.
+## Нагрузка
 
-Риски:
+Узкие места:
 
-- нестабильный `external_call_id` ломает correlation;
-- дубли facts без inbox могут повторно двигать state machine;
-- поздние facts должны оставаться idempotent/no-op по текущему статусу,
-  `operator_id` и `assignment_attempt`;
-- рост DLQ означает сломанный contract, deploy или upstream producer;
-- при выделении operator-service нужен отдельный контракт reservation/release;
-- если после `connected` начать менять Calls-статус, сервис начнёт владеть чужой
-  предметной областью.
-
-## Масштабирование
-
-Ожидаемые bottleneck-и:
-
-- DB locks при allocation;
+- locks в БД при выборе оператора;
 - рост `calls` и `telephony_outbox`;
-- Redis delayed jobs и retry storms;
-- Kafka consumer/publisher lag;
-- рост unresolved DLQ;
-- синхронное логирование.
-
-Увеличение workers помогает, пока bottleneck в application CPU/IO и queue depth.
-Оно перестаёт помогать, когда workers конкурируют за горячие rows
-operators/outbox, DB упирается в lock wait/write throughput, Redis получает retry
-wave или Kafka/Telephony становится медленнее producers.
+- много delayed jobs в Redis;
+- Kafka lag;
+- рост DLQ;
+- синхронные логи.
 
 Уже сделано:
 
-- индексы под allocation, retry scans, outbox claim и assignment lookup;
-- `FOR UPDATE SKIP LOCKED` для locked call/outbox batches на PostgreSQL/MySQL;
-- row lock при operator allocation;
-- jitter/backpressure для `calls-retry`;
-- stale outbox requeue;
-- expired reservation cleanup;
-- metrics snapshot по calls/outbox/reservations/queues/DLQ.
+- индексы под рабочие запросы;
+- `FOR UPDATE SKIP LOCKED` там, где workers забирают batch;
+- row lock при брони оператора;
+- jitter для `calls-retry`;
+- requeue зависшего outbox;
+- cleanup старых броней;
+- snapshot метрик.
 
 Дальше:
 
-1. Проверить Kafka partitioning по `external_call_id` на реальной нагрузке.
-2. Ввести inbox, если facts перестанут быть уникальными.
-3. Перевести clients/operators в read models или отдельный Dispatch/Routing
-   service.
-4. Архивировать или партиционировать завершённые calls и published outbox.
-5. Нагрузочно прогнать no-operators, массовый no-answer, hangup до соединения,
-   late facts after connected и Telephony lag.
+1. Проверить Kafka partitions по `external_call_id` на реальной нагрузке.
+2. Добавить inbox, если facts перестанут быть уникальными.
+3. Вынести clients/operators в отдельные таблицы чтения или отдельный
+   routing-service.
+4. Архивировать завершённые `calls` и `published` outbox.
+5. Прогнать сценарии: нет операторов, массовый no-answer, hangup до соединения,
+   поздние facts после `connected`, lag Telephony.

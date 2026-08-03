@@ -1,54 +1,57 @@
 # Calls
 
-Laravel-сервис обработки входящих звонков до успешного соединения клиента и
-оператора.
+Laravel-сервис, который обрабатывает входящий звонок до соединения клиента с
+оператором.
 
-Проект намеренно backend-only: нет пользовательского frontend-а, HTML/UI surface,
-Vite/Tailwind toolchain и браузерных assets. HTTP surface ограничен служебным
-endpoint-ом `/metrics`.
+Сервис без пользовательского UI. HTTP нужен только для `/metrics`.
 
-## Что делает сервис
+## Что делает
 
-- Принимает входящие call facts из Kafka.
-- Дедуплицирует звонки по `external_call_id`.
-- Ищет клиента по номеру телефона.
-- Выбирает и кратко резервирует доступного оператора.
-- Пишет команды в Telephony через transactional outbox.
-- Применяет Kafka facts от Telephony и двигает state machine.
-- После `connected` освобождает локальную reservation и завершает свою
-  ответственность.
+- Читает входящие звонки из Kafka.
+- Не создаёт дубль, если `external_call_id` уже есть.
+- Ищет клиента по телефону.
+- Ищет оператора и ставит короткую локальную бронь.
+- Пишет команды для Telephony в `telephony_outbox`.
+- Читает ответы Telephony из Kafka.
+- После `connected` снимает бронь и больше не ведёт звонок.
 
-Что Calls не делает:
+Что не делает:
 
-- не принимает входящий звонок через HTTP;
-- не вызывает Telephony напрямую по HTTP;
+- не принимает звонки через HTTP;
+- не звонит в Telephony напрямую;
 - не управляет SIP и разговором после `connected`;
-- не владеет фактической доступностью оператора, кроме локальной reservation.
+- не решает, доступен ли оператор после соединения.
 
-## Ключевые документы
+## Документы
 
-- [Архитектура](docs/architecture.md) - слои, границы и ownership.
-- [Решение](docs/solution.md) - call flow, state machine, retry/outbox/DLQ.
-- [Kafka contracts](docs/kafka-contracts.md) - topics, payloads, idempotency.
-- [ADR](docs/adr/README.md) - принятые архитектурные решения.
-- [Диаграммы](docs/diagrams.md) - PlantUML/PNG flow diagrams.
-- [Production](docs/production.md) - процессы, rollout, rollback.
-- [Load testing](docs/load-testing.md) - smoke/stress/soak проверки.
+- [Архитектура](docs/architecture.md)
+- [Решение](docs/solution.md)
+- [Kafka](docs/kafka-contracts.md)
+- [ADR](docs/adr/README.md)
+- [Диаграммы](docs/diagrams.md)
+- [Production](docs/production.md)
+- [Нагрузка](docs/load-testing.md)
 
-## Текущая модель
+## Основные правила
 
-Authoritative ingress - Kafka. `external_call_id` является стабильным business
-key звонка и Kafka message key для всех событий одного call.
+- Главный вход - Kafka.
+- `external_call_id` - ключ звонка.
+- Kafka key для событий одного звонка всегда равен `external_call_id`.
+- Статус `operator_dialing` используется и снаружи, и внутри Calls.
+- Бронь оператора хранится в `operators.reserved_call_id` и
+  `operators.reserved_at`.
+- Команды для Telephony всегда идут через `telephony_outbox`.
+- `/metrics` отдаёт готовые метрики и не делает тяжёлые SQL-запросы.
 
-Локальные таблицы:
+## Таблицы
 
-- `calls` - state machine звонка до `connected`;
-- `clients` - текущий shared DB lookup клиента;
-- `operators` - текущая read model доступности и локальная reservation;
-- `telephony_outbox` - исходящие команды в Telephony;
-- `dead_letter_messages` - poison Kafka records.
+- `calls` - звонок и его статус до `connected`;
+- `clients` - поиск клиента по телефону;
+- `operators` - внешняя доступность плюс локальная бронь Calls;
+- `telephony_outbox` - команды для Telephony;
+- `dead_letter_messages` - плохие Kafka-сообщения.
 
-Внутренние статусы call:
+Статусы звонка:
 
 - `new`
 - `waiting`
@@ -59,12 +62,9 @@ key звонка и Kafka message key для всех событий одног�
 - `callback_missed`
 - `hangup_on_retry`
 
-Внешний Kafka fact `operator_dialing` остается контрактом Telephony и внутри
-Calls маппится в статус `operator_dialing`.
-
 ## Локальный запуск
 
-Окружение подготовлено на Laravel Sail:
+Сервисы в Docker:
 
 - PostgreSQL: `pgsql:5432`
 - Redis: `redis:6379`
@@ -77,11 +77,18 @@ cp .env.example .env
 ./vendor/bin/sail up -d
 ./vendor/bin/sail artisan key:generate
 ./vendor/bin/sail artisan migrate
+```
+
+Проверки:
+
+```bash
 ./vendor/bin/sail test
 ./vendor/bin/sail composer phpstan
 ```
 
-Основные команды доступны через `make`:
+## Make
+
+Частые команды:
 
 ```bash
 make up
@@ -93,6 +100,10 @@ make outbox-publish
 make outbox-requeue-stale
 make release-expired-reservations
 make metrics-snapshot
+make prometheus-ready
+make prometheus-targets
+make prometheus-query QUERY='up{job="calls"}'
+make prometheus-smoke
 make kafka-consume TOPIC=incoming-calls
 make load-jsonl COUNT=1000
 make dead-letter-list
@@ -100,20 +111,16 @@ make dead-letter-prune
 make validate
 ```
 
-## Проверки
+## Kafka
 
-```bash
-./vendor/bin/pint --dirty --test
-composer phpstan
-php artisan test
-composer validate --strict --no-check-publish
+Локально:
+
+```env
+KAFKA_CONSUMER_ADAPTER=jsonl
+KAFKA_PRODUCER_ADAPTER=console
 ```
 
-## Kafka adapters
-
-Локально по умолчанию используются JSONL consumer и console producer.
-
-Production adapters включаются через env:
+Для `rdkafka`:
 
 ```env
 KAFKA_CONSUMER_ADAPTER=rdkafka
@@ -122,26 +129,24 @@ KAFKA_AUTO_OFFSET_RESET=earliest
 KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 ```
 
-Для `rdkafka` adapter-ов в runtime-образе нужно PHP-расширение
-`php-rdkafka`. Если расширения нет, adapter падает fail-fast.
+Рабочий Docker-образ должен содержать `php-rdkafka`. Без расширения `rdkafka`-режим
+падает сразу.
 
-## Metrics
+## Метрики
 
-Prometheus endpoint:
+Endpoint:
 
 ```text
 GET /metrics
 ```
 
-Локальный Docker Compose поднимает Prometheus и scrapes Calls внутри сети Docker:
+Локальный Prometheus читает:
 
 ```text
 http://laravel.test/metrics
 ```
 
-UI Prometheus доступен на `http://localhost:9090`.
-
-Базовый application contract:
+Минимальный набор метрик Calls:
 
 - `calls_received_total`
 - `calls_deduplicated_total`
@@ -156,5 +161,5 @@ UI Prometheus доступен на `http://localhost:9090`.
 - `oldest_waiting_call_age_seconds`
 - `oldest_outbox_message_age_seconds`
 
-В production также должны мониториться Kafka lag, Redis queue depth, PostgreSQL
-lock wait/slow queries, outbox depth и DLQ depth.
+Дополнительно снаружи нужно следить за Kafka lag, Redis queue depth,
+PostgreSQL slow queries/lock wait, outbox depth и DLQ depth.
