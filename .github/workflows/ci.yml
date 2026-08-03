@@ -50,11 +50,6 @@ jobs:
           coverage: none
           tools: composer:v2
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
@@ -96,9 +91,3 @@ jobs:
 
       - name: Run PHPUnit
         run: php artisan test
-
-      - name: Install frontend dependencies
-        run: npm install --ignore-scripts
-
-      - name: Build frontend assets
-        run: npm run build
