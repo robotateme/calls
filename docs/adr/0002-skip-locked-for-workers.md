@@ -1,50 +1,92 @@
-# ADR-0002: Row locks и SKIP LOCKED для конкурентных workers
+# ADR-0002: Workers забирают строки через row locks и SKIP LOCKED
 
 Status: Accepted
 
-## Context
+## Проблема
 
-Calls работает несколькими workers:
+Calls работает параллельно:
 
 - queue workers выбирают операторов;
-- outbox publishers claim-ят due records;
-- recovery jobs возвращают stale records и освобождают expired reservations.
+- outbox publishers забирают pending commands;
+- recovery jobs возвращают stale records и снимают expired reservations.
 
-Горячие таблицы `operators` и `telephony_outbox` могут обрабатываться
-параллельно. Без row locks один record может быть выбран несколькими workers.
-Без `SKIP LOCKED` workers могут ждать друг друга и терять throughput на lock wait.
+Несколько процессов могут одновременно смотреть в одни и те же таблицы:
 
-## Decision
+- `operators`;
+- `telephony_outbox`;
+- calls/retry выборки.
 
-Для конкурентного claim/selection используются row locks:
+Без lock один record могут забрать два workers. Без `SKIP LOCKED` workers могут
+стоять друг за другом и ждать lock, хотя рядом есть другие готовые строки.
 
-- call lookup/recovery batches используют `FOR UPDATE SKIP LOCKED` для
-  PostgreSQL/MySQL;
-- outbox claim/requeue использует `FOR UPDATE SKIP LOCKED` для PostgreSQL/MySQL;
-- operator allocation берёт выбранного оператора внутри transaction с row lock;
-- SQLite/test fallback использует обычный lock режим Laravel.
+## Решение
 
-Workers берут ограниченный batch, меняют статус/бронь в той же transaction и
-дальше работают только с уже claimed records.
+Там, где worker забирает работу из общей таблицы, используется row lock.
 
-## Consequences
+Для PostgreSQL/MySQL используем:
 
-- Несколько workers могут идти параллельно, не выбирая один и тот же outbox
-  record.
-- Залоченные records пропускаются, а не блокируют весь batch.
-- Нужны индексы под hot queries: allocation, due outbox, stale outbox и retry
-  scans.
-- Operator allocation всё ещё может ждать lock конкретной выбранной строки. Если
-  это станет bottleneck-ом, следующий шаг - перевести operator claim на явный
-  `FOR UPDATE SKIP LOCKED` или атомарный `UPDATE ... RETURNING` для PostgreSQL.
-- При росте нагрузки всё равно надо мониторить PostgreSQL lock wait, slow
-  queries и размер рабочих таблиц.
+```sql
+FOR UPDATE SKIP LOCKED
+```
 
-## Alternatives
+Это правило действует для:
 
-- Один worker на allocation/outbox. Отклонено: простой вариант, но плохо
-  масштабируется.
-- Advisory locks. Отклонено для текущего slice: сложнее операционно и хуже
-  читается, чем row-level claim в тех же таблицах.
-- Claim через `UPDATE ... RETURNING`. Возможный вариант для PostgreSQL-only
-  реализации, но текущий код сохраняет совместимый fallback для тестов и MySQL.
+- выборки batch calls для recovery/retry;
+- claim pending/due records в `telephony_outbox`;
+- requeue stale outbox records;
+- выбора оператора внутри transaction.
+
+Для SQLite в тестах остаётся обычный Laravel lock fallback.
+
+## Как должен работать worker
+
+Worker делает так:
+
+- берёт маленький batch;
+- лочит выбранные строки;
+- сразу помечает их как claimed/processing или ставит бронь;
+- коммитит transaction;
+- дальше работает только со своими claimed records.
+
+Главное правило: сначала явно забрать строку себе, потом делать side effect.
+
+## Зачем нужен SKIP LOCKED
+
+Если строку уже держит другой worker, текущий worker её пропускает.
+
+Так несколько workers могут обрабатывать разные строки параллельно, а не стоять
+в очереди за одной залоченной строкой.
+
+## Что нельзя делать
+
+- Нельзя сначала прочитать pending records, а потом отдельно решать, кто их
+  обработает.
+- Нельзя делать side effect до claim/lock.
+- Нельзя держать большую transaction во время внешнего вызова.
+- Нельзя считать, что один worker навсегда решает проблему гонок.
+
+## Индексы
+
+Под hot queries нужны индексы:
+
+- allocation операторов;
+- due outbox records;
+- stale outbox records;
+- retry/recovery scans.
+
+Без индексов `SKIP LOCKED` не спасёт от медленных запросов.
+
+## Минусы
+
+- Нужно следить за PostgreSQL lock wait и slow queries.
+- Выбор конкретного оператора всё ещё может ждать lock этой строки.
+- Если allocation станет bottleneck-ом, следующий шаг - явный
+  `FOR UPDATE SKIP LOCKED` для operator claim или PostgreSQL
+  `UPDATE ... RETURNING`.
+
+## Что отклонили
+
+- Один worker на всю обработку: проще, но плохо масштабируется.
+- Advisory locks: сложнее сопровождать и хуже видно в коде.
+- Только `UPDATE ... RETURNING`: хорошо для PostgreSQL-only, но текущему коду
+  нужен совместимый fallback для тестов и MySQL.

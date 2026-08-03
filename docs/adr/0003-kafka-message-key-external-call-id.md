@@ -1,49 +1,73 @@
-# ADR-0003: Kafka message key равен external_call_id
+# ADR-0003: Kafka key всегда равен external_call_id
 
 Status: Accepted
 
-## Context
+## Проблема
 
-Calls получает facts по одному звонку из Kafka и публикует commands в Telephony.
-Для одного call порядок событий критичен:
+Calls получает и отправляет Kafka messages по звонку.
 
-- incoming call должен быть зарегистрирован до Telephony facts;
-- `operator_dialing` должен относиться к текущему assignment attempt;
-- `bridge_established`, no-answer/drop и hangup не должны приходить в Calls в
-  случайном порядке между partitions.
+Для одного звонка порядок важен:
+
+- сначала надо зарегистрировать incoming call;
+- потом можно применять Telephony facts;
+- `operator_dialing` должен относиться к текущей попытке назначения;
+- retry/no-answer/drop/bridge events не должны перемешиваться между Kafka
+  partitions.
 
 Стабильный business key звонка - `external_call_id`.
 
-## Decision
+## Решение
 
-Все Kafka messages одного звонка используют:
+Для всех Kafka messages одного звонка:
 
 ```text
 key = external_call_id
 ```
 
-Это касается:
+Это относится к:
 
 - incoming facts;
 - Telephony facts;
 - outgoing Telephony commands из outbox.
 
-Consumer проверяет message key, если он передан: key должен совпадать с
-`payload.external_call_id`. Несовпадение считается contract violation и уходит в
-DLQ.
+## Проверка consumer-а
 
-## Consequences
+Если Kafka message key передан, consumer проверяет:
 
-- Kafka сохраняет порядок событий одного call внутри partition.
-- Replay и audit проще связывать по одному business key.
-- Consumer groups могут масштабироваться по partitions, но один call не должен
-  размазываться по разным partitions.
-- Если producer не ставит key или ставит другой key, это upstream contract bug.
+```text
+message key == payload.external_call_id
+```
 
-## Alternatives
+Если значения разные, это contract violation.
 
-- Key по `operator_id`. Отклонено: события одного call могут попасть в разные
-  partitions при смене оператора или retry.
-- Key по `command_id`/`message_id`. Отклонено: это технические ids, они ломают
-  ordering одного business flow.
-- Без key. Отклонено: Kafka не гарантирует порядок одного call между partitions.
+Такое сообщение нельзя молча обрабатывать. Его надо отправить в DLQ.
+
+## Почему это важно
+
+Kafka сохраняет порядок сообщений внутри одной partition. Чтобы события одного
+call попали в одну partition, у них должен быть один key.
+
+`external_call_id` подходит, потому что это business key звонка, а не технический
+id отдельного сообщения.
+
+## Что нельзя делать
+
+- Нельзя использовать `operator_id` как Kafka key.
+- Нельзя использовать `command_id` или `message_id` как Kafka key для call flow.
+- Нельзя отправлять сообщения без key, если они относятся к call flow.
+- Нельзя обрабатывать mismatch key/payload как нормальное событие.
+
+## Минусы
+
+- Producer обязан знать и ставить `external_call_id`.
+- Ошибка producer-а с неправильным key станет DLQ record.
+- Масштабирование идёт по partitions, но один call остаётся внутри одной
+  partition.
+
+## Что отклонили
+
+- Key по `operator_id`: при retry или смене оператора события одного call могут
+  попасть в разные partitions.
+- Key по `command_id`/`message_id`: это технические ids, они ломают ordering
+  одного business flow.
+- Без key: Kafka не гарантирует порядок одного call между partitions.
