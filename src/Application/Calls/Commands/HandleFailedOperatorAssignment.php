@@ -7,6 +7,7 @@ namespace Application\Calls\Commands;
 use Application\Calls\Ports\CallProcessingRetryQueue;
 use Application\Calls\Ports\CallWriteRepository;
 use Application\Operators\Ports\OperatorReservationRepository;
+use Application\Shared\Ports\Metrics;
 use Application\Shared\Ports\TransactionManager;
 use Application\Telephony\Ports\TelephonyCommandOutboxWriter;
 use Domain\Calls\OperatorAssignmentFailure;
@@ -21,6 +22,7 @@ final readonly class HandleFailedOperatorAssignment
         private TelephonyCommandOutboxWriter $telephonyCommands,
         private CallProcessingRetryQueue $retryQueue,
         private TransactionManager $transactions,
+        private Metrics $metrics,
     ) {}
 
     public function handle(string $externalCallId, int $operatorId, int $assignmentAttempt): void
@@ -75,6 +77,19 @@ final readonly class HandleFailedOperatorAssignment
 
         if ($result?->shouldRetry() === true) {
             $this->retryQueue->retryLater($result->callId(), $result->retryDelaySeconds());
+            $this->metrics->increment('retry_scheduled_total', tags: [
+                'reason' => 'operator_assignment_failed',
+            ]);
+
+            return;
+        }
+
+        $finalStatus = $result?->finalStatus();
+
+        if ($finalStatus !== null) {
+            $this->metrics->increment('calls_finished_total', tags: [
+                'result' => $finalStatus->value,
+            ]);
         }
     }
 }

@@ -26,6 +26,7 @@ final class Call
         private ?Timestamp $assignmentRequestedAt,
         private ?Timestamp $operatorDialingAt,
         private ?Timestamp $connectedAt,
+        private readonly Timestamp $createdAt,
     ) {}
 
     public static function restore(
@@ -43,6 +44,7 @@ final class Call
         ?Timestamp $assignmentRequestedAt,
         ?Timestamp $operatorDialingAt,
         ?Timestamp $connectedAt,
+        Timestamp $createdAt,
     ): self {
         return new self(
             id: $id,
@@ -59,6 +61,7 @@ final class Call
             assignmentRequestedAt: $assignmentRequestedAt,
             operatorDialingAt: $operatorDialingAt,
             connectedAt: $connectedAt,
+            createdAt: $createdAt,
         );
     }
 
@@ -165,6 +168,11 @@ final class Call
     public function connectedTimestamp(): ?Timestamp
     {
         return $this->connectedAt;
+    }
+
+    public function createdTimestamp(): Timestamp
+    {
+        return $this->createdAt;
     }
 
     public function isNew(): bool

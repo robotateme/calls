@@ -6,6 +6,7 @@ namespace Application\Calls\Commands;
 
 use Application\Calls\Ports\CallWriteRepository;
 use Application\Operators\Ports\OperatorReservationRepository;
+use Application\Shared\Ports\Metrics;
 use Application\Shared\Ports\TransactionManager;
 use Application\Telephony\Ports\TelephonyCommandOutboxReader;
 use Application\Telephony\Ports\TelephonyCommandOutboxWriter;
@@ -18,24 +19,25 @@ final readonly class MarkCallHungUpHandler
         private TelephonyCommandOutboxWriter $telephonyCommandWriter,
         private TelephonyCommandOutboxReader $telephonyCommandReader,
         private TransactionManager $transactions,
+        private Metrics $metrics,
     ) {}
 
     public function handle(MarkCallHungUpFromKafkaCommand $command): void
     {
         $normalizedExternalCallId = trim($command->externalCallId);
 
-        $this->transactions->run(function () use ($normalizedExternalCallId): void {
+        $finishedStatus = $this->transactions->run(function () use ($normalizedExternalCallId): ?string {
             $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
-                return;
+                return null;
             }
 
             $operatorId = $call->isAssignmentInProgress() ? $call->assignedOperatorId() : null;
             $attempt = $call->operatorSearchAttempts();
 
             if (! $call->markHungUp()) {
-                return;
+                return null;
             }
 
             $this->calls->save($call);
@@ -57,6 +59,14 @@ final readonly class MarkCallHungUpHandler
 
                 $this->operators->releaseForCall($operatorId, $call->callId());
             }
+
+            return $call->status()->value;
         });
+
+        if ($finishedStatus !== null) {
+            $this->metrics->increment('calls_finished_total', tags: [
+                'result' => $finishedStatus,
+            ]);
+        }
     }
 }

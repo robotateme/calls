@@ -8,6 +8,7 @@ use App\Models\Call;
 use App\Models\Operator;
 use Application\Calls\Commands\MarkCallHungUpFromKafkaCommand;
 use Application\Calls\Commands\MarkCallHungUpHandler;
+use Application\Shared\Ports\Metrics;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -19,6 +20,9 @@ final class MarkCallHungUpHandlerTest extends TestCase
 
     public function test_it_marks_new_call_missed_by_policy(): void
     {
+        $metrics = new FakeHungUpMetrics;
+        $this->app->instance(Metrics::class, $metrics);
+
         $call = $this->createCall([
             'external_call_id' => 'asterisk-linkedid-3001',
             'status' => 'new',
@@ -35,6 +39,7 @@ final class MarkCallHungUpHandlerTest extends TestCase
             'status' => 'missed',
             'next_operator_search_at' => null,
         ]);
+        $this->assertContains(['calls_finished_total', 1, ['result' => 'missed']], $metrics->increments);
     }
 
     public function test_it_marks_waiting_call_callback_missed_by_policy(): void
@@ -60,6 +65,9 @@ final class MarkCallHungUpHandlerTest extends TestCase
 
     public function test_it_does_not_change_connected_call(): void
     {
+        $metrics = new FakeHungUpMetrics;
+        $this->app->instance(Metrics::class, $metrics);
+
         $operator = Operator::query()->create([
             'name' => 'Operator 1',
             'available' => true,
@@ -81,6 +89,7 @@ final class MarkCallHungUpHandlerTest extends TestCase
             'status' => 'connected',
             'operator_id' => $operator->id,
         ]);
+        $this->assertSame([], $metrics->increments);
     }
 
     public function test_it_marks_assignment_requested_call_missed_and_releases_operator(): void
@@ -254,4 +263,21 @@ final class MarkCallHungUpHandlerTest extends TestCase
             ], JSON_THROW_ON_ERROR),
         ]));
     }
+}
+
+final class FakeHungUpMetrics implements Metrics
+{
+    /**
+     * @var list<array{0: string, 1: int, 2: array<string, int|string>}>
+     */
+    public array $increments = [];
+
+    public function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        $this->increments[] = [$name, $value, $tags];
+    }
+
+    public function gauge(string $name, int|float $value, array $tags = []): void {}
+
+    public function timing(string $name, int|float $milliseconds, array $tags = []): void {}
 }

@@ -8,6 +8,7 @@ use Application\Calls\Commands\PublishTelephonyOutboxHandler;
 use Application\Calls\Commands\RequeueStaleTelephonyOutboxHandler;
 use Application\Shared\Ports\ConsoleCommandResult;
 use Application\Shared\Ports\ConsoleCommandRunner;
+use Application\Shared\Ports\Metrics;
 use Application\Telephony\Ports\TelephonyCommandPublisher;
 use Domain\Telephony\TelephonyOutboxMessage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -24,7 +25,9 @@ final class PublishTelephonyOutboxHandlerTest extends TestCase
     public function test_it_publishes_due_outbox_records_and_marks_them_published(): void
     {
         $publisher = new FakeTelephonyCommandPublisher;
+        $metrics = new FakeTelephonyOutboxMetrics;
         $this->app->instance(TelephonyCommandPublisher::class, $publisher);
+        $this->app->instance(Metrics::class, $metrics);
         $id = $this->insertOutbox([
             'external_call_id' => 'asterisk-linkedid-5001',
             'type' => 'call_assignment_requested',
@@ -50,12 +53,16 @@ final class PublishTelephonyOutboxHandlerTest extends TestCase
             'last_error' => null,
         ]);
         $this->assertNotNull(DB::table('telephony_outbox')->where('id', $id)->value('published_at'));
+        $this->assertContains(['telephony_outbox_publish_total', 1, ['result' => 'published']], $metrics->increments);
+        $this->assertContains(['telephony_outbox_publish_total', 0, ['result' => 'failed']], $metrics->increments);
     }
 
     public function test_it_reschedules_failed_publish_before_max_attempts(): void
     {
         $publisher = new FakeTelephonyCommandPublisher(throws: true);
+        $metrics = new FakeTelephonyOutboxMetrics;
         $this->app->instance(TelephonyCommandPublisher::class, $publisher);
+        $this->app->instance(Metrics::class, $metrics);
         $id = $this->insertOutbox([
             'external_call_id' => 'asterisk-linkedid-5002',
             'idempotency_key' => 'asterisk-linkedid-5002:operator_search_retry_scheduled:1',
@@ -73,6 +80,8 @@ final class PublishTelephonyOutboxHandlerTest extends TestCase
             'last_error' => 'Kafka unavailable',
         ]);
         $this->assertNotNull(DB::table('telephony_outbox')->where('id', $id)->value('available_at'));
+        $this->assertContains(['telephony_outbox_publish_total', 0, ['result' => 'published']], $metrics->increments);
+        $this->assertContains(['telephony_outbox_publish_total', 1, ['result' => 'failed']], $metrics->increments);
     }
 
     public function test_it_marks_failed_after_max_attempts(): void
@@ -298,4 +307,21 @@ final class FakeOutboxConsoleCommandRunner implements ConsoleCommandRunner
     {
         return $this->result;
     }
+}
+
+final class FakeTelephonyOutboxMetrics implements Metrics
+{
+    /**
+     * @var list<array{0: string, 1: int, 2: array<string, int|string>}>
+     */
+    public array $increments = [];
+
+    public function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        $this->increments[] = [$name, $value, $tags];
+    }
+
+    public function gauge(string $name, int|float $value, array $tags = []): void {}
+
+    public function timing(string $name, int|float $milliseconds, array $tags = []): void {}
 }

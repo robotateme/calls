@@ -8,6 +8,7 @@ use Application\Calls\Ports\CallProcessingQueue;
 use Application\Calls\Ports\CallReadRepository;
 use Application\Calls\Ports\CallWriteRepository;
 use Application\Shared\Ports\EventBus;
+use Application\Shared\Ports\Metrics;
 use Application\Shared\Ports\TransactionManager;
 use Domain\Calls\CallHangupPolicy;
 use Domain\Calls\Events\IncomingCallRegistered;
@@ -24,6 +25,7 @@ final readonly class RegisterIncomingCallHandler
         private TransactionManager $transactions,
         private CallProcessingQueue $processingQueue,
         private EventBus $events,
+        private Metrics $metrics,
     ) {}
 
     public function handle(RegisterIncomingCallFromKafkaCommand $command): RegisterIncomingCallResult
@@ -67,6 +69,8 @@ final readonly class RegisterIncomingCallHandler
         });
 
         if ($result->created) {
+            $this->metrics->increment('calls_received_total');
+
             $this->events->publish(new IncomingCallRegistered(
                 callId: $result->callId,
                 externalCallId: $normalizedExternalCallId,

@@ -76,6 +76,9 @@ final readonly class ReleaseExpiredOperatorReservationsHandler
         foreach ($failures as $failure) {
             if ($failure->shouldRetry()) {
                 $this->retryQueue->retryLater($failure->callId(), $failure->retryDelaySeconds());
+                $this->metrics->increment('retry_scheduled_total', tags: [
+                    'reason' => 'reservation_expired',
+                ]);
             }
         }
 
@@ -86,6 +89,15 @@ final readonly class ReleaseExpiredOperatorReservationsHandler
         $this->metrics->increment('operator_reservation.expired_released', $released);
         $this->metrics->increment('operator_reservation.expired_retried', $retries);
         $this->metrics->increment('operator_reservation.expired_finalized', $finalized);
+        foreach ($failures as $failure) {
+            $finalStatus = $failure->finalStatus();
+
+            if ($finalStatus !== null) {
+                $this->metrics->increment('calls_finished_total', tags: [
+                    'result' => $finalStatus->value,
+                ]);
+            }
+        }
         $this->metrics->timing('operator_reservation.release_expired_duration_ms', (microtime(true) - $startedAt) * 1000);
 
         return count($failures);

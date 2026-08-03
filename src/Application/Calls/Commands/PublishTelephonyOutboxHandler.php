@@ -46,6 +46,12 @@ final readonly class PublishTelephonyOutboxHandler
         $this->metrics->increment('telephony_outbox.claimed', count($messages));
         $this->metrics->increment('telephony_outbox.published', $published);
         $this->metrics->increment('telephony_outbox.publish_failed', $failed);
+        $this->metrics->increment('telephony_outbox_publish_total', $published, [
+            'result' => 'published',
+        ]);
+        $this->metrics->increment('telephony_outbox_publish_total', $failed, [
+            'result' => 'failed',
+        ]);
         $this->metrics->timing('telephony_outbox.publish_duration_ms', (microtime(true) - $startedAt) * 1000);
 
         return new PublishTelephonyOutboxResult(

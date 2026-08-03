@@ -8,13 +8,14 @@ use App\Models\Call;
 use App\Models\Operator;
 use Application\Calls\Commands\MarkCallBridgeEstablishedFromKafkaCommand;
 use Application\Calls\Commands\MarkCallBridgeEstablishedHandler;
+use Application\Calls\Commands\MarkOperatorDialingFromKafkaCommand;
+use Application\Calls\Commands\MarkOperatorDialingHandler;
 use Application\Calls\Commands\MarkOperatorLegDroppedFromKafkaCommand;
 use Application\Calls\Commands\MarkOperatorLegDroppedHandler;
 use Application\Calls\Commands\MarkOperatorNoAnswerFromKafkaCommand;
 use Application\Calls\Commands\MarkOperatorNoAnswerHandler;
-use Application\Calls\Commands\MarkOperatorDialingFromKafkaCommand;
-use Application\Calls\Commands\MarkOperatorDialingHandler;
 use Application\Calls\Ports\CallProcessingRetryQueue;
+use Application\Shared\Ports\Metrics;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -49,6 +50,9 @@ final class TelephonyEventsHandlerTest extends TestCase
 
     public function test_it_marks_bridge_established_as_connected(): void
     {
+        $metrics = new FakeTelephonyEventMetrics;
+        $this->app->instance(Metrics::class, $metrics);
+
         $operator = $this->operator(available: true);
         $call = $this->createCall([
             'external_call_id' => 'asterisk-linkedid-4002',
@@ -77,12 +81,16 @@ final class TelephonyEventsHandlerTest extends TestCase
             'reserved_at' => null,
         ]);
         $this->assertNotNull(Call::query()->findOrFail($call->id)->connected_at);
+        $this->assertContains(['calls_finished_total', 1, ['result' => 'connected']], $metrics->increments);
+        $this->assertTimingRecorded('call_time_to_connect_seconds', [], $metrics);
     }
 
     public function test_operator_no_answer_releases_operator_and_schedules_next_search_attempt(): void
     {
         $retryQueue = new FakeTelephonyEventRetryQueue;
+        $metrics = new FakeTelephonyEventMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $operator = $this->operator(available: true);
         $call = $this->createCall([
@@ -119,12 +127,15 @@ final class TelephonyEventsHandlerTest extends TestCase
             'idempotency_key' => 'asterisk-linkedid-4003:operator_search_retry_scheduled:1',
         ]);
         $this->assertSame([[$call->id, 20]], $retryQueue->retries);
+        $this->assertContains(['retry_scheduled_total', 1, ['reason' => 'operator_assignment_failed']], $metrics->increments);
     }
 
     public function test_operator_leg_dropped_before_bridge_finishes_by_policy_when_attempts_are_exhausted(): void
     {
         $retryQueue = new FakeTelephonyEventRetryQueue;
+        $metrics = new FakeTelephonyEventMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $operator = $this->operator(available: true);
         $call = $this->createCall([
@@ -160,6 +171,7 @@ final class TelephonyEventsHandlerTest extends TestCase
             'idempotency_key' => 'asterisk-linkedid-4004:operator_search_exhausted:1',
         ]);
         $this->assertSame([], $retryQueue->retries);
+        $this->assertContains(['calls_finished_total', 1, ['result' => 'callback_missed']], $metrics->increments);
     }
 
     public function test_operator_leg_dropped_after_bridge_does_not_change_connected_call(): void
@@ -230,6 +242,22 @@ final class TelephonyEventsHandlerTest extends TestCase
             'operator_search_hangup_policy' => 'missed',
         ], $attributes));
     }
+
+    /**
+     * @param  array<string, int|string>  $tags
+     */
+    private function assertTimingRecorded(string $name, array $tags, FakeTelephonyEventMetrics $metrics): void
+    {
+        foreach ($metrics->timings as $timing) {
+            if ($timing[0] === $name && $timing[2] === $tags) {
+                $this->addToAssertionCount(1);
+
+                return;
+            }
+        }
+
+        $this->fail(sprintf('Timing metric [%s] was not recorded.', $name));
+    }
 }
 
 final class FakeTelephonyEventRetryQueue implements CallProcessingRetryQueue
@@ -242,5 +270,30 @@ final class FakeTelephonyEventRetryQueue implements CallProcessingRetryQueue
     public function retryLater(int $callId, int $delaySeconds): void
     {
         $this->retries[] = [$callId, $delaySeconds];
+    }
+}
+
+final class FakeTelephonyEventMetrics implements Metrics
+{
+    /**
+     * @var list<array{0: string, 1: int, 2: array<string, int|string>}>
+     */
+    public array $increments = [];
+
+    /**
+     * @var list<array{0: string, 1: int|float, 2: array<string, int|string>}>
+     */
+    public array $timings = [];
+
+    public function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        $this->increments[] = [$name, $value, $tags];
+    }
+
+    public function gauge(string $name, int|float $value, array $tags = []): void {}
+
+    public function timing(string $name, int|float $milliseconds, array $tags = []): void
+    {
+        $this->timings[] = [$name, $milliseconds, $tags];
     }
 }

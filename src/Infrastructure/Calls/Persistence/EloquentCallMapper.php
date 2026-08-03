@@ -46,6 +46,7 @@ final readonly class EloquentCallMapper
             assignmentRequestedAt: $this->timestamp($record->getRawOriginal('assignment_requested_at')),
             operatorDialingAt: $this->timestamp($record->getRawOriginal('operator_dialing_at')),
             connectedAt: $this->timestamp($record->getRawOriginal('connected_at')),
+            createdAt: $this->timestamp($record->getRawOriginal('created_at')) ?? Timestamp::now(),
         );
     }
 

@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use Application\Calls\Commands\RegisterIncomingCallFromKafkaCommand;
 use Application\Calls\Commands\RegisterIncomingCallHandler;
 use Application\Calls\Ports\CallProcessingQueue;
+use Application\Shared\Ports\Metrics;
 use Domain\Calls\Events\IncomingCallRegistered;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
@@ -21,7 +22,9 @@ final class RegisterIncomingCallHandlerTest extends TestCase
         Event::fake();
 
         $queue = new FakeCallProcessingQueue;
+        $metrics = new FakeRegisterIncomingCallMetrics;
         $this->app->instance(CallProcessingQueue::class, $queue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $result = $this->handler()->handle(new RegisterIncomingCallFromKafkaCommand(
             externalCallId: 'asterisk-linkedid-1001',
@@ -45,6 +48,7 @@ final class RegisterIncomingCallHandlerTest extends TestCase
             'operator_search_hangup_policy' => 'hangup_on_retry',
         ]);
         $this->assertSame([$result->callId], $queue->callIds);
+        $this->assertContains(['calls_received_total', 1, []], $metrics->increments);
 
         Event::assertDispatched(IncomingCallRegistered::class, static function (IncomingCallRegistered $event) use ($result): bool {
             return $event->eventId() === 'incoming-call:asterisk-linkedid-1001:registered'
@@ -62,7 +66,9 @@ final class RegisterIncomingCallHandlerTest extends TestCase
         Event::fake();
 
         $queue = new FakeCallProcessingQueue;
+        $metrics = new FakeRegisterIncomingCallMetrics;
         $this->app->instance(CallProcessingQueue::class, $queue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $first = $this->handler()->handle(new RegisterIncomingCallFromKafkaCommand(
             externalCallId: 'asterisk-linkedid-1003',
@@ -79,6 +85,7 @@ final class RegisterIncomingCallHandlerTest extends TestCase
         $this->assertFalse($second->created);
         $this->assertSame($first->callId, $second->callId);
         $this->assertSame([$first->callId], $queue->callIds);
+        $this->assertSame([['calls_received_total', 1, []]], $metrics->increments);
         Event::assertDispatched(IncomingCallRegistered::class, 1);
     }
 
@@ -99,4 +106,21 @@ final class FakeCallProcessingQueue implements CallProcessingQueue
     {
         $this->callIds[] = $callId;
     }
+}
+
+final class FakeRegisterIncomingCallMetrics implements Metrics
+{
+    /**
+     * @var list<array{0: string, 1: int, 2: array<string, int|string>}>
+     */
+    public array $increments = [];
+
+    public function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        $this->increments[] = [$name, $value, $tags];
+    }
+
+    public function gauge(string $name, int|float $value, array $tags = []): void {}
+
+    public function timing(string $name, int|float $milliseconds, array $tags = []): void {}
 }

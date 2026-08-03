@@ -10,6 +10,7 @@ use App\Models\Client;
 use App\Models\Operator;
 use Application\Calls\Commands\ProcessIncomingCallHandler;
 use Application\Calls\Ports\CallProcessingRetryQueue;
+use Application\Shared\Ports\Metrics;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -20,7 +21,9 @@ final class ProcessIncomingCallJobTest extends TestCase
     public function test_it_assigns_new_call_to_available_operator(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $client = Client::query()->create(['phone' => '+15550000001']);
         $operator = Operator::query()->create([
@@ -56,12 +59,16 @@ final class ProcessIncomingCallJobTest extends TestCase
             'status' => 'pending',
         ]);
         $this->assertSame([], $retryQueue->retries);
+        $this->assertContains(['operator_reservation_total', 1, ['result' => 'success']], $metrics->increments);
+        $this->assertTimingRecorded('call_processing_duration_seconds', ['result' => 'assignment_requested'], $metrics);
     }
 
     public function test_it_does_not_allocate_afk_operator(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $afkOperator = Operator::query()->create([
             'name' => 'AFK Operator',
@@ -103,7 +110,9 @@ final class ProcessIncomingCallJobTest extends TestCase
     public function test_it_does_not_allocate_operator_reserved_by_another_call(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $reservedByAnotherCall = $this->createCall([
             'external_call_id' => 'asterisk-linkedid-reserved-owner',
@@ -142,7 +151,9 @@ final class ProcessIncomingCallJobTest extends TestCase
     public function test_it_does_not_reprocess_call_that_is_not_processable(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $operator = Operator::query()->create([
             'name' => 'Operator 1',
@@ -219,7 +230,9 @@ final class ProcessIncomingCallJobTest extends TestCase
     public function test_it_marks_call_waiting_and_retries_later_when_no_operator_is_available_and_attempts_remain(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $client = Client::query()->create(['phone' => '+15550000003']);
         $call = $this->createCall([
@@ -240,6 +253,9 @@ final class ProcessIncomingCallJobTest extends TestCase
         ]);
         $this->assertNotNull(Call::query()->findOrFail($call->id)->next_operator_search_at);
         $this->assertSame([[$call->id, 15]], $retryQueue->retries);
+        $this->assertContains(['operator_reservation_total', 1, ['result' => 'no_available']], $metrics->increments);
+        $this->assertContains(['retry_scheduled_total', 1, ['reason' => 'no_available_operator']], $metrics->increments);
+        $this->assertTimingRecorded('call_processing_duration_seconds', ['result' => 'retry_scheduled'], $metrics);
         $this->assertDatabaseHas('telephony_outbox', [
             'type' => 'operator_search_retry_scheduled',
             'external_call_id' => 'asterisk-linkedid-2003',
@@ -250,7 +266,9 @@ final class ProcessIncomingCallJobTest extends TestCase
     public function test_it_assigns_waiting_call_when_operator_becomes_available(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $operator = Operator::query()->create([
             'name' => 'Operator 1',
@@ -284,7 +302,9 @@ final class ProcessIncomingCallJobTest extends TestCase
     public function test_it_finishes_with_policy_status_when_operator_attempts_are_exhausted(): void
     {
         $retryQueue = new FakeCallProcessingRetryQueue;
+        $metrics = new FakeProcessIncomingCallMetrics;
         $this->app->instance(CallProcessingRetryQueue::class, $retryQueue);
+        $this->app->instance(Metrics::class, $metrics);
 
         $call = $this->createCall([
             'external_call_id' => 'asterisk-linkedid-2005',
@@ -302,6 +322,9 @@ final class ProcessIncomingCallJobTest extends TestCase
             'next_operator_search_at' => null,
         ]);
         $this->assertSame([], $retryQueue->retries);
+        $this->assertContains(['operator_reservation_total', 1, ['result' => 'no_available']], $metrics->increments);
+        $this->assertContains(['calls_finished_total', 1, ['result' => 'callback_missed']], $metrics->increments);
+        $this->assertTimingRecorded('call_processing_duration_seconds', ['result' => 'exhausted'], $metrics);
         $this->assertDatabaseHas('telephony_outbox', [
             'type' => 'operator_search_exhausted',
             'external_call_id' => 'asterisk-linkedid-2005',
@@ -331,6 +354,22 @@ final class ProcessIncomingCallJobTest extends TestCase
         (new ProcessIncomingCallJob((int) $call->id))
             ->handle($this->app->make(ProcessIncomingCallHandler::class));
     }
+
+    /**
+     * @param  array<string, int|string>  $tags
+     */
+    private function assertTimingRecorded(string $name, array $tags, FakeProcessIncomingCallMetrics $metrics): void
+    {
+        foreach ($metrics->timings as $timing) {
+            if ($timing[0] === $name && $timing[2] === $tags) {
+                $this->addToAssertionCount(1);
+
+                return;
+            }
+        }
+
+        $this->fail(sprintf('Timing metric [%s] was not recorded.', $name));
+    }
 }
 
 final class FakeCallProcessingRetryQueue implements CallProcessingRetryQueue
@@ -343,5 +382,30 @@ final class FakeCallProcessingRetryQueue implements CallProcessingRetryQueue
     public function retryLater(int $callId, int $delaySeconds): void
     {
         $this->retries[] = [$callId, $delaySeconds];
+    }
+}
+
+final class FakeProcessIncomingCallMetrics implements Metrics
+{
+    /**
+     * @var list<array{0: string, 1: int, 2: array<string, int|string>}>
+     */
+    public array $increments = [];
+
+    /**
+     * @var list<array{0: string, 1: int|float, 2: array<string, int|string>}>
+     */
+    public array $timings = [];
+
+    public function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        $this->increments[] = [$name, $value, $tags];
+    }
+
+    public function gauge(string $name, int|float $value, array $tags = []): void {}
+
+    public function timing(string $name, int|float $milliseconds, array $tags = []): void
+    {
+        $this->timings[] = [$name, $milliseconds, $tags];
     }
 }
