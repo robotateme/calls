@@ -25,6 +25,10 @@ key = external_call_id
 - Telephony facts;
 - outgoing Telephony commands.
 
+Что это значит на практике: всё, что относится к одному звонку, попадает в одну
+очередь порядка внутри Kafka. Calls не получает `hangup` раньше старого
+`operator_dialing` только из-за того, что producer выбрал другой key.
+
 ## Проверка
 
 Если Kafka key передан, consumer проверяет:
@@ -34,6 +38,9 @@ message key == payload.external_call_id
 ```
 
 Если не совпало, сообщение идёт в DLQ.
+
+Calls не исправляет key сам. Несовпадение key и payload означает, что producer
+нарушил договор, а порядок событий уже нельзя считать надёжным.
 
 ## Почему
 

@@ -24,6 +24,11 @@ Scheduler запускает:
 Если outbox растёт быстрее, чем scheduler успевает публиковать, запускайте
 несколько отдельных outbox publishers.
 
+Важно: одного HTTP-процесса недостаточно. Без scheduler не обновятся метрики и не
+почистятся старые брони. Без queue workers звонки не будут обрабатываться. Без
+Kafka consumers Calls не увидит новые звонки и факты Telephony. Без outbox
+publisher команды останутся в БД и не уйдут в Telephony.
+
 ## Kafka
 
 Локально:
@@ -96,6 +101,13 @@ php artisan calls:dead-letter:prune-resolved --older-than-days=30
 Рост DLQ - это проблема сообщения, deploy-а или upstream producer-а. Это не
 нормальная очередь задач.
 
+Если DLQ растёт:
+
+1. Сначала смотрите новые `reason`.
+2. Потом смотрите пример payload.
+3. Потом проверяйте последний deploy и producer-а.
+4. Не удаляйте записи вручную, пока не понятно, что произошло.
+
 ## Метрики
 
 Endpoint:
@@ -156,6 +168,10 @@ oldest_waiting_call_age_seconds
 oldest_outbox_message_age_seconds
 ```
 
+Если `up{job="calls"}` равен 0, Prometheus не видит `/metrics`. Если gauges не
+меняются, проверьте `calls:metrics:snapshot` и scheduler. Если counters не
+растут при тестовых событиях, проверьте обработчики и Redis queue.
+
 ## Deploy
 
 Порядок:
@@ -174,3 +190,7 @@ oldest_outbox_message_age_seconds
 - откатить app image;
 - не удалять outbox/DLQ вручную;
 - проверить `telephony_outbox.failed`, `dead_letter_messages`, Kafka lag.
+
+Зачем такой порядок: сначала останавливаем вход и отправку наружу, чтобы не
+продолжать писать новые команды старым или сломанным кодом. Потом откатываем
+образ и проверяем, какие сообщения остались незавершёнными.

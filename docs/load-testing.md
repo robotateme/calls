@@ -16,6 +16,10 @@ php artisan calls:metrics:snapshot
 php artisan calls:dead-letter:list --limit=20
 ```
 
+Успешный быстрый прогон означает: сообщения прочитались, jobs отработали,
+outbox не застрял, DLQ не вырос. Он не доказывает, что real Kafka настроена
+правильно, потому что JSONL обходит настоящий broker.
+
 ## Готовые профили
 
 | Профиль | Что запускает | Для чего |
@@ -79,6 +83,10 @@ bash tools/load/run-jsonl-load.sh
 - Для больших прогонов пишет `snapshot-*.json` и `progress.env`.
 - Завершается с ошибкой, если остались queue/outbox backlog или unresolved DLQ.
 
+Если скрипт упал, сначала смотрите отчёт в `storage/load-reports/<prefix>`.
+Обычно важны три вещи: сколько осталось jobs, сколько осталось outbox-сообщений
+и появились ли записи в DLQ.
+
 ## GitHub Actions
 
 Есть две GitHub Actions проверки:
@@ -119,3 +127,12 @@ topic.
 - `dead_letter_current`;
 - CPU/memory workers;
 - error rate в логах.
+
+Как читать результат:
+
+- растёт Kafka lag - consumers не успевают читать вход;
+- растёт Redis queue depth - workers не успевают обрабатывать звонки;
+- растёт `telephony_outbox_current{status="pending"}` - publisher не успевает
+  отправлять команды;
+- растёт `dead_letter_current` - приходят плохие сообщения или handler падает;
+- растёт `oldest_waiting_call_age_seconds` - звонки слишком долго ждут оператора.

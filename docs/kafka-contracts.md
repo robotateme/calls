@@ -2,6 +2,10 @@
 
 Kafka - главный канал между Calls и Telephony.
 
+Для Calls Kafka-сообщение - это внешний факт или команда. Если формат сообщения
+не совпадает с договором ниже, Calls не должен угадывать смысл. Такое сообщение
+идёт в DLQ.
+
 Используется для:
 
 - входящих звонков;
@@ -21,6 +25,12 @@ key = external_call_id
 Так Kafka держит порядок событий одного звонка внутри partition.
 
 Если key есть и он не равен `payload.external_call_id`, сообщение идёт в DLQ.
+
+Пример:
+
+- good: key `asterisk-linkedid-6001`, payload
+  `external_call_id=asterisk-linkedid-6001`;
+- bad: key `operator-15`, payload `external_call_id=asterisk-linkedid-6001`.
 
 См. [ADR-0003](adr/0003-kafka-message-key-external-call-id.md).
 
@@ -48,6 +58,9 @@ KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 ## Commands: Calls -> Telephony
 
 Commands публикуются только из `telephony_outbox`.
+
+Calls не вызывает Telephony напрямую. Сначала команда сохраняется в БД, потом
+publisher отправляет её в Kafka.
 
 Envelope:
 
@@ -189,6 +202,9 @@ Consumer получает:
 
 Для `incoming-calls` можно передать payload без envelope. Для `telephony.facts`
 нужен envelope с `type`.
+
+Правило для facts: Telephony сообщает, что уже случилось. Calls не должен
+считать факт успешным, если он относится к другому оператору или старой попытке.
 
 Проверка одного сообщения:
 
@@ -354,6 +370,16 @@ Facts:
 
 Сейчас DLQ - таблица `dead_letter_messages` с `message_hash`. Позже её можно
 заменить на Kafka DLQ topic без смены application-контракта.
+
+Что делать с DLQ:
+
+1. Посмотреть `reason`.
+2. Найти producer-а или handler, который создал проблему.
+3. Исправить формат или код.
+4. Пометить запись resolved.
+
+Не надо молча переигрывать всё из DLQ. Сначала нужно понять, почему сообщение
+туда попало.
 
 ## Не сделано
 
