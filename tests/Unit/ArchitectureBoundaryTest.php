@@ -14,7 +14,7 @@ use Infrastructure\Shared\Bus\LaravelEventBus;
 use Infrastructure\Shared\Bus\LaravelQueueBus;
 use Infrastructure\Shared\Kafka\EloquentDeadLetterQueue;
 use Infrastructure\Shared\Kafka\JsonLinesKafkaConsumer;
-use Infrastructure\Shared\Observability\LaravelLogMetrics;
+use Infrastructure\Shared\Observability\CompositeMetrics;
 use Infrastructure\Shared\Persistence\DatabaseTransactionManager;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -63,7 +63,7 @@ final class ArchitectureBoundaryTest extends TestCase
         $this->assertInstanceOf(EloquentDeadLetterQueue::class, $this->app->make(DeadLetterQueue::class));
         $this->assertInstanceOf(LaravelEventBus::class, $this->app->make(EventBus::class));
         $this->assertInstanceOf(JsonLinesKafkaConsumer::class, $this->app->make(KafkaConsumer::class));
-        $this->assertInstanceOf(LaravelLogMetrics::class, $this->app->make(Metrics::class));
+        $this->assertInstanceOf(CompositeMetrics::class, $this->app->make(Metrics::class));
         $this->assertInstanceOf(LaravelQueueBus::class, $this->app->make(QueueBus::class));
         $this->assertInstanceOf(DatabaseTransactionManager::class, $this->app->make(TransactionManager::class));
     }

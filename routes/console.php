@@ -5,14 +5,15 @@ use Application\Calls\Commands\ConsumeKafkaCallFactsHandler;
 use Application\Calls\Commands\HandleKafkaCallFactCommand;
 use Application\Calls\Commands\HandleKafkaCallFactHandler;
 use Application\Calls\Commands\PublishTelephonyOutboxHandler;
-use Application\Calls\Commands\RequeueStaleTelephonyOutboxHandler;
 use Application\Calls\Commands\ReleaseExpiredOperatorReservationsHandler;
+use Application\Calls\Commands\RequeueStaleTelephonyOutboxHandler;
 use Application\Shared\Ports\Metrics;
 use Illuminate\Contracts\Queue\Factory as QueueFactory;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Infrastructure\Shared\Observability\PrometheusMetricsStore;
 use Symfony\Component\Console\Command\Command;
 
 Artisan::command('inspire', function () {
@@ -263,7 +264,18 @@ Artisan::command('calls:dead-letter:prune-resolved
     return Command::SUCCESS;
 })->purpose('Prune resolved dead letter records after retention period');
 
-Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFactory $queues): int {
+Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFactory $queues, PrometheusMetricsStore $prometheusMetricsStore): int {
+    foreach ([
+        'calls.depth',
+        'telephony_outbox.depth',
+        'dead_letter.depth',
+        'operator_reservation.active',
+        'operator_reservation.expired',
+        'queue.depth',
+    ] as $metricName) {
+        $prometheusMetricsStore->forgetGaugeSeries($metricName);
+    }
+
     if (Schema::hasTable('calls')) {
         foreach (DB::table('calls')->select('status', DB::raw('count(*) as total'))->groupBy('status')->get() as $row) {
             $metrics->gauge('calls.depth', (int) $row->total, [

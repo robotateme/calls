@@ -5,9 +5,20 @@ declare(strict_types=1);
 namespace Infrastructure\Shared\Observability;
 
 use Application\Shared\Ports\Metrics;
-use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\Repository;
+use LogicException;
 
+/**
+ * @phpstan-type MetricLabels array<string, string>
+ * @phpstan-type RegisteredSummarySeries array{id: string, name: string, type: 'summary', labels: MetricLabels}
+ * @phpstan-type RegisteredValueSeries array{id: string, name: string, type: 'counter'|'gauge', labels: MetricLabels}
+ * @phpstan-type RegisteredSeries RegisteredSummarySeries|RegisteredValueSeries
+ * @phpstan-type SnapshotSummarySeries array{id: string, name: string, type: 'summary', labels: MetricLabels, count: int, sum: float}
+ * @phpstan-type SnapshotValueSeries array{id: string, name: string, type: 'counter'|'gauge', labels: MetricLabels, value: int|float}
+ */
 final class PrometheusMetricsStore implements Metrics
 {
     private const REGISTRY_LOCK_SECONDS = 5;
@@ -28,7 +39,7 @@ final class PrometheusMetricsStore implements Metrics
     {
         $series = $this->registerSeries($name, 'counter', $tags);
 
-        $this->cache->lock($this->seriesLockKey($series['id']), self::REGISTRY_LOCK_SECONDS)->block(1, function () use ($series, $value): void {
+        $this->lock($this->seriesLockKey($series['id']))->block(1, function () use ($series, $value): void {
             $valueKey = $this->seriesValueKey($series['id'], 'value');
             $current = (int) $this->cache->get($valueKey, 0);
 
@@ -47,7 +58,7 @@ final class PrometheusMetricsStore implements Metrics
     {
         $series = $this->registerSeries($name, 'summary', $tags);
 
-        $this->cache->lock($this->seriesLockKey($series['id']), self::REGISTRY_LOCK_SECONDS)->block(1, function () use ($series, $milliseconds): void {
+        $this->lock($this->seriesLockKey($series['id']))->block(1, function () use ($series, $milliseconds): void {
             $countKey = $this->seriesValueKey($series['id'], 'count');
             $sumKey = $this->seriesValueKey($series['id'], 'sum');
 
@@ -59,24 +70,36 @@ final class PrometheusMetricsStore implements Metrics
         });
     }
 
+    public function forgetGaugeSeries(string $name): void
+    {
+        $normalizedName = $this->normalizeMetricName($name);
+
+        $this->lock($this->registryLockKey())->block(1, function () use ($normalizedName): void {
+            $registry = $this->registry();
+            $updatedRegistry = [];
+
+            foreach ($registry as $seriesId => $series) {
+                if ($series['type'] === 'gauge' && $series['name'] === $normalizedName) {
+                    $this->cache->forget($this->seriesValueKey($seriesId, 'value'));
+
+                    continue;
+                }
+
+                $updatedRegistry[$seriesId] = $series;
+            }
+
+            $this->cache->forever($this->registryKey(), $updatedRegistry);
+        });
+    }
+
     /**
-     * @return list<array{
-     *     id: string,
-     *     name: string,
-     *     type: string,
-     *     labels: array<string, string>,
-     *     value?: int|float,
-     *     count?: int,
-     *     sum?: float
-     * }>
+     * @return list<SnapshotSummarySeries|SnapshotValueSeries>
      */
     public function snapshot(): array
     {
-        /** @var array<string, array{id: string, name: string, type: string, labels: array<string, string>}> $registry */
-        $registry = $this->cache->get($this->registryKey(), []);
         $snapshot = [];
 
-        foreach ($registry as $series) {
+        foreach ($this->registry() as $series) {
             if ($series['type'] === 'summary') {
                 $snapshot[] = [
                     'id' => $series['id'],
@@ -110,7 +133,8 @@ final class PrometheusMetricsStore implements Metrics
 
     /**
      * @param  array<string, int|string>  $tags
-     * @return array{id: string, name: string, type: string, labels: array<string, string>}
+     * @param  'counter'|'gauge'|'summary'  $type
+     * @return RegisteredSeries
      */
     private function registerSeries(string $name, string $type, array $tags): array
     {
@@ -124,9 +148,8 @@ final class PrometheusMetricsStore implements Metrics
             'labels' => $labels,
         ];
 
-        $this->cache->lock($this->registryLockKey(), self::REGISTRY_LOCK_SECONDS)->block(1, function () use ($series, $seriesId): void {
-            /** @var array<string, array{id: string, name: string, type: string, labels: array<string, string>}> $registry */
-            $registry = $this->cache->get($this->registryKey(), []);
+        $this->lock($this->registryLockKey())->block(1, function () use ($series, $seriesId): void {
+            $registry = $this->registry();
             $registry[$seriesId] = $series;
 
             $this->cache->forever($this->registryKey(), $registry);
@@ -207,5 +230,95 @@ final class PrometheusMetricsStore implements Metrics
         }
 
         return 0;
+    }
+
+    /**
+     * @return array<string, RegisteredSeries>
+     */
+    private function registry(): array
+    {
+        $rawRegistry = $this->cache->get($this->registryKey(), []);
+
+        if (! is_array($rawRegistry)) {
+            return [];
+        }
+
+        $registry = [];
+
+        foreach ($rawRegistry as $seriesId => $series) {
+            if (! is_string($seriesId) || ! is_array($series)) {
+                continue;
+            }
+
+            $normalizedSeries = $this->normalizeRegisteredSeries($series);
+
+            if ($normalizedSeries === null) {
+                continue;
+            }
+
+            $registry[$seriesId] = $normalizedSeries;
+        }
+
+        return $registry;
+    }
+
+    /**
+     * @param  array<mixed>  $series
+     * @return RegisteredSeries|null
+     */
+    private function normalizeRegisteredSeries(array $series): ?array
+    {
+        $id = $series['id'] ?? null;
+        $name = $series['name'] ?? null;
+        $type = $series['type'] ?? null;
+        $labels = $series['labels'] ?? null;
+
+        if (! is_string($id) || ! is_string($name) || ! is_string($type) || ! is_array($labels)) {
+            return null;
+        }
+
+        $normalizedLabels = [];
+
+        foreach ($labels as $key => $value) {
+            if (! is_string($key) || ! is_string($value)) {
+                return null;
+            }
+
+            $normalizedLabels[$key] = $value;
+        }
+
+        if ($type === 'summary') {
+            return [
+                'id' => $id,
+                'name' => $name,
+                'type' => 'summary',
+                'labels' => $normalizedLabels,
+            ];
+        }
+
+        if ($type === 'counter' || $type === 'gauge') {
+            return [
+                'id' => $id,
+                'name' => $name,
+                'type' => $type,
+                'labels' => $normalizedLabels,
+            ];
+        }
+
+        return null;
+    }
+
+    private function lock(string $key): Lock
+    {
+        $store = $this->cache->getStore();
+
+        if (! $store instanceof LockProvider) {
+            throw new LogicException(sprintf(
+                'Cache store [%s] does not support locks required by PrometheusMetricsStore.',
+                $store::class,
+            ));
+        }
+
+        return $store->lock($key, self::REGISTRY_LOCK_SECONDS);
     }
 }

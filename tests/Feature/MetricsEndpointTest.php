@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use Application\Shared\Ports\Metrics;
 use Illuminate\Support\Facades\Cache;
+use Infrastructure\Shared\Observability\PrometheusMetricsStore;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Tests\TestCase;
@@ -45,5 +46,20 @@ final class MetricsEndpointTest extends TestCase
         $this->assertStringContainsString('# TYPE call_processing_duration_ms summary', $content);
         $this->assertStringContainsString('call_processing_duration_ms_sum{result="retry_scheduled"} 15.5', $content);
         $this->assertStringContainsString('call_processing_duration_ms_count{result="retry_scheduled"} 1', $content);
+    }
+
+    public function test_it_drops_stale_gauge_series_before_new_snapshot_values_are_written(): void
+    {
+        $metrics = $this->app->make(Metrics::class);
+        $store = $this->app->make(PrometheusMetricsStore::class);
+
+        $metrics->gauge('telephony_outbox.depth', 12, ['status' => 'pending']);
+        $store->forgetGaugeSeries('telephony_outbox.depth');
+        $metrics->gauge('telephony_outbox.depth', 3, ['status' => 'processing']);
+
+        $content = (string) $this->get('/metrics')->getContent();
+
+        $this->assertStringNotContainsString('telephony_outbox_depth{status="pending"} 12', $content);
+        $this->assertStringContainsString('telephony_outbox_depth{status="processing"} 3', $content);
     }
 }
