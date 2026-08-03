@@ -24,6 +24,11 @@ final class MetricsEndpointTest extends TestCase
         $this->app->instance(LoggerInterface::class, new NullLogger);
     }
 
+    public function test_root_route_is_not_exposed(): void
+    {
+        $this->get('/')->assertNotFound();
+    }
+
     public function test_it_exposes_metrics_in_prometheus_text_format(): void
     {
         $metrics = $this->app->make(Metrics::class);
