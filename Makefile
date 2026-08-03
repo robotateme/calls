@@ -5,7 +5,7 @@ TEST_ENV := APP_ENV=testing APP_MAINTENANCE_DRIVER=file BCRYPT_ROUNDS=4 LOG_CHAN
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui
+.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui prometheus
 
 help:
 	@printf "%s\n" "Available targets:"
@@ -40,6 +40,7 @@ help:
 	@printf "  %-18s %s\n" "dead-letter-prune" "Prune resolved DLQ records in Sail"
 	@printf "  %-18s %s\n" "kafka-topics" "List Kafka topics"
 	@printf "  %-18s %s\n" "kafka-ui" "Print Kafka UI URL"
+	@printf "  %-18s %s\n" "prometheus" "Print Prometheus URL"
 
 up:
 	$(SAIL) up -d
@@ -140,3 +141,6 @@ kafka-topics:
 
 kafka-ui:
 	@printf "%s\n" "Kafka UI: http://localhost:$${FORWARD_KAFKA_UI_PORT:-8081}"
+
+prometheus:
+	@printf "%s\n" "Prometheus: http://localhost:$${FORWARD_PROMETHEUS_PORT:-9090}"

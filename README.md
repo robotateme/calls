@@ -70,6 +70,7 @@ Calls маппится в статус `operator_dialing`.
 - Redis: `redis:6379`
 - Kafka: `kafka:9092` внутри Docker, `localhost:9094` с хоста
 - Kafka UI: `http://localhost:8081`
+- Prometheus: `http://localhost:9090`
 
 ```bash
 cp .env.example .env
@@ -131,6 +132,14 @@ Prometheus endpoint:
 ```text
 GET /metrics
 ```
+
+Локальный Docker Compose поднимает Prometheus и scrapes Calls внутри сети Docker:
+
+```text
+http://laravel.test/metrics
+```
+
+UI Prometheus доступен на `http://localhost:9090`.
 
 В production также должны мониториться Kafka lag, Redis queue depth, PostgreSQL
 lock wait/slow queries, outbox depth и DLQ depth.

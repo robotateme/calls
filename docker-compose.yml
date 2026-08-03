@@ -103,6 +103,23 @@ services:
             kafka:
                 condition: service_healthy
 
+    prometheus:
+        image: 'prom/prometheus:v3.13.2'
+        ports:
+            - '${FORWARD_PROMETHEUS_PORT:-9090}:9090'
+        volumes:
+            - './docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro'
+            - 'sail-prometheus:/prometheus'
+        command:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=7d'
+        networks:
+            - sail
+        depends_on:
+            laravel.test:
+                condition: service_started
+
 networks:
     sail:
         driver: bridge
@@ -113,4 +130,6 @@ volumes:
     sail-redis:
         driver: local
     sail-kafka:
+        driver: local
+    sail-prometheus:
         driver: local
