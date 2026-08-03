@@ -62,10 +62,21 @@ final class OperationalMetricsSnapshotTest extends TestCase
 
         $this->assertContains(['calls.depth', 1, ['status' => 'waiting']], $metrics->gauges);
         $this->assertContains(['calls.depth', 1, ['status' => 'connected']], $metrics->gauges);
+        $this->assertContains(['calls_current', 0, ['status' => 'new']], $metrics->gauges);
+        $this->assertContains(['calls_current', 1, ['status' => 'waiting']], $metrics->gauges);
+        $this->assertContains(['calls_current', 1, ['status' => 'connected']], $metrics->gauges);
+        $this->assertGaugeRecorded('call_time_in_state_seconds', ['status' => 'waiting'], $metrics);
+        $this->assertGaugeRecorded('call_time_in_state_seconds', ['status' => 'connected'], $metrics);
         $this->assertContains(['telephony_outbox.depth', 1, ['status' => 'pending']], $metrics->gauges);
         $this->assertContains(['telephony_outbox.depth', 1, ['status' => 'processing']], $metrics->gauges);
+        $this->assertContains(['telephony_outbox_current', 1, ['status' => 'pending']], $metrics->gauges);
+        $this->assertContains(['telephony_outbox_current', 1, ['status' => 'processing']], $metrics->gauges);
+        $this->assertContains(['telephony_outbox_current', 0, ['status' => 'published']], $metrics->gauges);
+        $this->assertGaugeRecorded('telephony_outbox_oldest_pending_seconds', [], $metrics);
         $this->assertContains(['dead_letter.depth', 2, ['reason' => 'invalid_payload']], $metrics->gauges);
+        $this->assertContains(['dead_letter_messages_current', 2, ['reason' => 'invalid_payload']], $metrics->gauges);
         $this->assertContains(['operator_reservation.active', 1, []], $metrics->gauges);
+        $this->assertContains(['operator_reservations_current', 1, []], $metrics->gauges);
         $this->assertContains(['operator_reservation.expired', 1, []], $metrics->gauges);
         $this->assertContains(['queue.depth', 0, ['queue' => 'calls']], $metrics->gauges);
         $this->assertContains(['queue.depth', 0, ['queue' => 'calls-retry']], $metrics->gauges);
@@ -102,6 +113,22 @@ final class OperationalMetricsSnapshotTest extends TestCase
             'resolved_at' => $resolvedAt,
             'created_at' => now(),
         ]);
+    }
+
+    /**
+     * @param  array<string, int|string>  $tags
+     */
+    private function assertGaugeRecorded(string $name, array $tags, FakeOperationalMetrics $metrics): void
+    {
+        foreach ($metrics->gauges as $gauge) {
+            if ($gauge[0] === $name && $gauge[2] === $tags) {
+                $this->addToAssertionCount(1);
+
+                return;
+            }
+        }
+
+        $this->fail(sprintf('Gauge metric [%s] was not recorded.', $name));
     }
 }
 

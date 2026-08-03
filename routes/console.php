@@ -10,6 +10,7 @@ use Application\Calls\Commands\RequeueStaleTelephonyOutboxHandler;
 use Application\Shared\Ports\Metrics;
 use Illuminate\Contracts\Queue\Factory as QueueFactory;
 use Illuminate\Foundation\Inspiring;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -272,32 +273,110 @@ Artisan::command('calls:dead-letter:prune-resolved
 
 Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFactory $queues, PrometheusMetricsStore $prometheusMetricsStore): int {
     $reservationTtlSeconds = (int) config('calls.operator_reservation_ttl_seconds');
+    $callCurrentStatuses = ['new', 'waiting', 'assignment_requested', 'operator_dialing', 'connected'];
+    $telephonyOutboxStatuses = ['pending', 'processing', 'published', 'failed'];
+    $secondsSince = static function (mixed $timestamp): int {
+        if ($timestamp === null || $timestamp === '') {
+            return 0;
+        }
+
+        try {
+            return max(0, (int) Carbon::parse((string) $timestamp)->diffInSeconds(now(), true));
+        } catch (Throwable) {
+            return 0;
+        }
+    };
 
     foreach ([
         'calls.depth',
+        'calls_current',
+        'call_time_in_state_seconds',
         'telephony_outbox.depth',
+        'telephony_outbox_current',
+        'telephony_outbox_oldest_pending_seconds',
         'dead_letter.depth',
+        'dead_letter_messages_current',
         'operator_reservation.active',
         'operator_reservation.expired',
+        'operator_reservations_current',
         'queue.depth',
     ] as $metricName) {
         $prometheusMetricsStore->forgetGaugeSeries($metricName);
     }
 
     if (Schema::hasTable('calls')) {
-        foreach (DB::table('calls')->select('status', DB::raw('count(*) as total'))->groupBy('status')->get() as $row) {
+        $callCounts = DB::table('calls')->select('status', DB::raw('count(*) as total'))->groupBy('status')->get();
+
+        foreach ($callCounts as $row) {
             $metrics->gauge('calls.depth', (int) $row->total, [
                 'status' => (string) $row->status,
+            ]);
+        }
+
+        $currentCounts = array_fill_keys($callCurrentStatuses, 0);
+
+        foreach ($callCounts as $row) {
+            $status = (string) $row->status;
+
+            if (array_key_exists($status, $currentCounts)) {
+                $currentCounts[$status] = (int) $row->total;
+            }
+        }
+
+        foreach ($currentCounts as $status => $total) {
+            $metrics->gauge('calls_current', $total, [
+                'status' => $status,
+            ]);
+        }
+
+        $stateAges = array_fill_keys($callCurrentStatuses, 0);
+
+        foreach (DB::table('calls')
+            ->select('status', DB::raw("min(coalesce(case status when 'new' then created_at when 'waiting' then updated_at when 'assignment_requested' then assignment_requested_at when 'operator_dialing' then operator_dialing_at when 'connected' then connected_at end, updated_at, created_at)) as state_started_at"))
+            ->whereIn('status', $callCurrentStatuses)
+            ->groupBy('status')
+            ->get() as $row) {
+            $stateAges[(string) $row->status] = $secondsSince($row->state_started_at ?? null);
+        }
+
+        foreach ($stateAges as $status => $ageSeconds) {
+            $metrics->gauge('call_time_in_state_seconds', $ageSeconds, [
+                'status' => $status,
             ]);
         }
     }
 
     if (Schema::hasTable('telephony_outbox')) {
-        foreach (DB::table('telephony_outbox')->select('status', DB::raw('count(*) as total'))->groupBy('status')->get() as $row) {
+        $outboxCounts = DB::table('telephony_outbox')->select('status', DB::raw('count(*) as total'))->groupBy('status')->get();
+
+        foreach ($outboxCounts as $row) {
             $metrics->gauge('telephony_outbox.depth', (int) $row->total, [
                 'status' => (string) $row->status,
             ]);
         }
+
+        $currentOutboxCounts = array_fill_keys($telephonyOutboxStatuses, 0);
+
+        foreach ($outboxCounts as $row) {
+            $status = (string) $row->status;
+
+            if (array_key_exists($status, $currentOutboxCounts)) {
+                $currentOutboxCounts[$status] = (int) $row->total;
+            }
+        }
+
+        foreach ($currentOutboxCounts as $status => $total) {
+            $metrics->gauge('telephony_outbox_current', $total, [
+                'status' => $status,
+            ]);
+        }
+
+        $oldestPendingCreatedAt = DB::table('telephony_outbox')
+            ->where('status', 'pending')
+            ->whereNull('canceled_at')
+            ->min('created_at');
+
+        $metrics->gauge('telephony_outbox_oldest_pending_seconds', $secondsSince($oldestPendingCreatedAt));
     }
 
     if (Schema::hasTable('dead_letter_messages')) {
@@ -305,11 +384,17 @@ Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFact
             $metrics->gauge('dead_letter.depth', (int) $row->total, [
                 'reason' => (string) $row->reason,
             ]);
+            $metrics->gauge('dead_letter_messages_current', (int) $row->total, [
+                'reason' => (string) $row->reason,
+            ]);
         }
     }
 
     if (Schema::hasTable('operators')) {
-        $metrics->gauge('operator_reservation.active', (int) DB::table('operators')->whereNotNull('reserved_call_id')->count());
+        $activeReservations = (int) DB::table('operators')->whereNotNull('reserved_call_id')->count();
+
+        $metrics->gauge('operator_reservation.active', $activeReservations);
+        $metrics->gauge('operator_reservations_current', $activeReservations);
         $metrics->gauge('operator_reservation.expired', (int) DB::table('operators')
             ->whereNotNull('reserved_call_id')
             ->where('reserved_at', '<=', now()->subSeconds($reservationTtlSeconds))
