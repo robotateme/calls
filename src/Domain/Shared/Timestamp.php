@@ -6,6 +6,7 @@ namespace Domain\Shared;
 
 use DateTimeImmutable;
 use DateTimeInterface;
+use Exception;
 use InvalidArgumentException;
 
 final readonly class Timestamp
@@ -22,11 +23,17 @@ final readonly class Timestamp
         return new self(DateTimeImmutable::createFromInterface($value));
     }
 
+    /**
+     * @throws Exception
+     */
     public static function fromString(string $value): self
     {
         return new self(new DateTimeImmutable($value));
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public function plusSeconds(int $seconds): self
     {
         if ($seconds < 0) {
@@ -36,6 +43,9 @@ final readonly class Timestamp
         return new self($this->value->modify("+{$seconds} seconds"));
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public function minusSeconds(int $seconds): self
     {
         if ($seconds < 0) {

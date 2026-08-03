@@ -11,6 +11,9 @@ final readonly class OperatorSearchRetryDelay
 {
     private function __construct(private int $seconds) {}
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public static function fromSeconds(int $seconds): self
     {
         if ($seconds < 0) {

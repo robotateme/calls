@@ -10,6 +10,9 @@ final readonly class OperatorSearchMaxAttempts
 {
     private function __construct(private int $value) {}
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public static function fromInt(int $value): self
     {
         if ($value < 1) {

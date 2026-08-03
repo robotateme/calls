@@ -8,7 +8,9 @@ use Application\Shared\Ports\Metrics;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Cache\Repository;
+use JsonException;
 use LogicException;
 
 /**
@@ -21,7 +23,7 @@ use LogicException;
  */
 final class PrometheusMetricsStore implements Metrics
 {
-    private const REGISTRY_LOCK_SECONDS = 5;
+    private const int REGISTRY_LOCK_SECONDS = 5;
 
     private readonly Repository $cache;
 
@@ -37,64 +39,70 @@ final class PrometheusMetricsStore implements Metrics
 
     public function increment(string $name, int $value = 1, array $tags = []): void
     {
-        $series = $this->registerSeries($name, 'counter', $tags);
+        $this->rescue(function () use ($name, $value, $tags): void {
+            $series = $this->registerSeries($name, 'counter', $tags);
 
-        $this->lock($this->seriesLockKey($series['id']))->block(1, function () use ($series, $value): void {
-            $valueKey = $this->seriesValueKey($series['id'], 'value');
-            $current = (int) $this->cache->get($valueKey, 0);
+            $this->lock($this->seriesLockKey($series['id']))->block(1, function () use ($series, $value): void {
+                $valueKey = $this->seriesValueKey($series['id'], 'value');
+                $current = (int) $this->cache->get($valueKey, 0);
 
-            $this->cache->forever($valueKey, $current + $value);
+                $this->cache->forever($valueKey, $current + $value);
+            });
         });
     }
 
     public function gauge(string $name, int|float $value, array $tags = []): void
     {
-        $series = $this->registerSeries($name, 'gauge', $tags);
+        $this->rescue(function () use ($name, $value, $tags): void {
+            $series = $this->registerSeries($name, 'gauge', $tags);
 
-        $this->cache->forever($this->seriesValueKey($series['id'], 'value'), $value);
+            $this->cache->forever($this->seriesValueKey($series['id'], 'value'), $value);
+        });
     }
 
     public function timing(string $name, int|float $milliseconds, array $tags = []): void
     {
-        $series = $this->registerSeries($name, 'summary', $tags);
+        $this->rescue(function () use ($name, $milliseconds, $tags): void {
+            $series = $this->registerSeries($name, 'summary', $tags);
 
-        $this->lock($this->seriesLockKey($series['id']))->block(1, function () use ($series, $milliseconds): void {
-            $countKey = $this->seriesValueKey($series['id'], 'count');
-            $sumKey = $this->seriesValueKey($series['id'], 'sum');
+            $this->lock($this->seriesLockKey($series['id']))->block(1, function () use ($series, $milliseconds): void {
+                $countKey = $this->seriesValueKey($series['id'], 'count');
+                $sumKey = $this->seriesValueKey($series['id'], 'sum');
 
-            $currentCount = (int) $this->cache->get($countKey, 0);
-            $currentSum = (float) $this->cache->get($sumKey, 0.0);
+                $currentCount = (int) $this->cache->get($countKey, 0);
+                $currentSum = (float) $this->cache->get($sumKey, 0.0);
 
-            $this->cache->forever($countKey, $currentCount + 1);
-            $this->cache->forever($sumKey, $currentSum + $milliseconds);
+                $this->cache->forever($countKey, $currentCount + 1);
+                $this->cache->forever($sumKey, $currentSum + $milliseconds);
+            });
         });
     }
 
     public function forgetGaugeSeries(string $name): void
     {
-        $normalizedName = $this->normalizeMetricName($name);
+        $this->rescue(function () use ($name): void {
+            $normalizedName = $this->normalizeMetricName($name);
 
-        $this->lock($this->registryLockKey())->block(1, function () use ($normalizedName): void {
-            $registry = $this->registry();
-            $updatedRegistry = [];
+            $this->lock($this->registryLockKey())->block(1, function () use ($normalizedName): void {
+                $registry = $this->registry();
+                $updatedRegistry = [];
 
-            foreach ($registry as $seriesId => $series) {
-                if ($series['type'] === 'gauge' && $series['name'] === $normalizedName) {
-                    $this->cache->forget($this->seriesValueKey($seriesId, 'value'));
+                foreach ($registry as $seriesId => $series) {
+                    if ($series['type'] === 'gauge' && $series['name'] === $normalizedName) {
+                        $this->cache->forget($this->seriesValueKey($seriesId, 'value'));
 
-                    continue;
+                        continue;
+                    }
+
+                    $updatedRegistry[$seriesId] = $series;
                 }
 
-                $updatedRegistry[$seriesId] = $series;
-            }
-
-            $this->cache->forever($this->registryKey(), $updatedRegistry);
+                $this->cache->forever($this->registryKey(), $updatedRegistry);
+            });
         });
     }
 
-    /**
-     * @return list<SnapshotSummarySeries|SnapshotValueSeries>
-     */
+    /** @phpstan-return list<SnapshotSummarySeries|SnapshotValueSeries> */
     public function snapshot(): array
     {
         $snapshot = [];
@@ -133,8 +141,14 @@ final class PrometheusMetricsStore implements Metrics
 
     /**
      * @param  array<string, int|string>  $tags
-     * @param  'counter'|'gauge'|'summary'  $type
-     * @return RegisteredSeries
+     *
+     * @phpstan-param  'counter'|'gauge'|'summary'  $type
+     *
+     * @phpstan-return RegisteredSeries
+     *
+     * @throws JsonException
+     * @throws LogicException
+     * @throws LockTimeoutException
      */
     private function registerSeries(string $name, string $type, array $tags): array
     {
@@ -232,9 +246,7 @@ final class PrometheusMetricsStore implements Metrics
         return 0;
     }
 
-    /**
-     * @return array<string, RegisteredSeries>
-     */
+    /** @phpstan-return array<string, RegisteredSeries> */
     private function registry(): array
     {
         $rawRegistry = $this->cache->get($this->registryKey(), []);
@@ -264,7 +276,8 @@ final class PrometheusMetricsStore implements Metrics
 
     /**
      * @param  array<mixed>  $series
-     * @return RegisteredSeries|null
+     *
+     * @phpstan-return RegisteredSeries|null
      */
     private function normalizeRegisteredSeries(array $series): ?array
     {
@@ -320,5 +333,14 @@ final class PrometheusMetricsStore implements Metrics
         }
 
         return $store->lock($key, self::REGISTRY_LOCK_SECONDS);
+    }
+
+    private function rescue(callable $callback): void
+    {
+        try {
+            $callback();
+        } catch (JsonException|LockTimeoutException|LogicException) {
+            // Metrics are best-effort and must not interrupt call processing.
+        }
     }
 }

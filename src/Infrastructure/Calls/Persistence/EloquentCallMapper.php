@@ -18,9 +18,17 @@ use Domain\Calls\PhoneNumber;
 use Domain\Clients\ClientId;
 use Domain\Operators\OperatorId;
 use Domain\Shared\Timestamp;
+use Exception;
+use InvalidArgumentException;
+use ValueError;
 
 final readonly class EloquentCallMapper
 {
+    /**
+     * @throws Exception
+     * @throws InvalidArgumentException
+     * @throws ValueError
+     */
     public function toDomain(CallRecord $record): Call
     {
         return Call::restore(
@@ -59,6 +67,9 @@ final readonly class EloquentCallMapper
         ];
     }
 
+    /**
+     * @throws Exception
+     */
     private function timestamp(mixed $value): ?Timestamp
     {
         if ($value === null || $value === '') {
@@ -72,11 +83,17 @@ final readonly class EloquentCallMapper
         return Timestamp::fromString((string) $value);
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
     private function clientId(mixed $value): ?ClientId
     {
         return $value === null ? null : ClientId::fromInt((int) $value);
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
     private function operatorId(mixed $value): ?OperatorId
     {
         return $value === null ? null : OperatorId::fromInt((int) $value);

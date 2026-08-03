@@ -8,9 +8,13 @@ use Application\Telephony\Ports\TelephonyCommandOutboxReader;
 use Application\Telephony\Ports\TelephonyCommandOutboxWriter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use JsonException;
 
 final readonly class EloquentTelephonyCommandOutbox implements TelephonyCommandOutboxReader, TelephonyCommandOutboxWriter
 {
+    /**
+     * @throws JsonException
+     */
     public function recordCallAssignmentRequested(string $externalCallId, int $operatorId, int $attempt): void
     {
         $this->record(
@@ -25,6 +29,9 @@ final readonly class EloquentTelephonyCommandOutbox implements TelephonyCommandO
         );
     }
 
+    /**
+     * @throws JsonException
+     */
     public function recordCallAssignmentCanceled(string $externalCallId, int $operatorId, int $attempt, string $reason): void
     {
         $this->record(
@@ -40,6 +47,9 @@ final readonly class EloquentTelephonyCommandOutbox implements TelephonyCommandO
         );
     }
 
+    /**
+     * @throws JsonException
+     */
     public function recordOperatorSearchRetryScheduled(string $externalCallId, int $attempt, int $retryDelaySeconds): void
     {
         $this->record(
@@ -54,6 +64,9 @@ final readonly class EloquentTelephonyCommandOutbox implements TelephonyCommandO
         );
     }
 
+    /**
+     * @throws JsonException
+     */
     public function recordOperatorSearchExhausted(string $externalCallId, int $attempt, string $finalStatus): void
     {
         $this->record(
@@ -95,6 +108,8 @@ final readonly class EloquentTelephonyCommandOutbox implements TelephonyCommandO
 
     /**
      * @param  array<string, int|string>  $payload
+     *
+     * @throws JsonException
      */
     private function record(string $type, string $externalCallId, string $idempotencyKey, array $payload): void
     {

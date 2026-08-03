@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Infrastructure\Telephony\Outbox;
 
 use Domain\Telephony\TelephonyOutboxMessage;
+use JsonException;
 
 final readonly class EloquentTelephonyOutboxMapper
 {
     /**
      * @param  array<string, mixed>  $record
+     *
+     * @throws JsonException
      */
     public function toDomain(array $record, int $attemptOffset = 1): TelephonyOutboxMessage
     {

@@ -10,6 +10,9 @@ final readonly class PhoneNumber
 {
     private function __construct(private string $value) {}
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public static function fromString(string $value): self
     {
         $value = trim($value);

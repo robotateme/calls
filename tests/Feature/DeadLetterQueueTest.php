@@ -80,6 +80,41 @@ final class DeadLetterQueueTest extends TestCase
             'result' => 'duplicate',
         ]], $metrics->counters);
     }
+
+    public function test_it_records_dead_letter_with_non_utf8_payload_without_throwing(): void
+    {
+        $metrics = new FakeDeadLetterMetrics;
+        $this->app->instance(Metrics::class, $metrics);
+
+        $deadLetters = $this->app->make(DeadLetterQueue::class);
+
+        $deadLetters->record(
+            source: 'telephony-facts-consumer',
+            topic: 'telephony.facts',
+            partition: 1,
+            offset: 77,
+            messageKey: 'asterisk-linkedid-dlq-binary',
+            traceId: 'trace-dlq-binary',
+            reason: 'handler_failed',
+            rawPayload: "\xB1\x31",
+            decodedPayload: [
+                'broken' => "\xB1\x31",
+            ],
+        );
+
+        $row = DB::table('dead_letter_messages')->first();
+
+        $this->assertNotNull($row);
+        $this->assertSame("\xB1\x31", $row->raw_payload);
+        $this->assertNull($row->decoded_payload);
+        $this->assertNotEmpty($row->message_hash);
+        $this->assertContains(['dead_letter.recorded', 1, [
+            'source' => 'telephony-facts-consumer',
+            'topic' => 'telephony.facts',
+            'reason' => 'handler_failed',
+            'result' => 'inserted',
+        ]], $metrics->counters);
+    }
 }
 
 final class FakeDeadLetterMetrics implements Metrics

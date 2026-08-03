@@ -8,6 +8,9 @@ interface KafkaConsumer
 {
     /**
      * @param  callable(KafkaConsumerMessage): void  $handler
+     *
+     * @throws \InvalidArgumentException
+     * @throws \RuntimeException
      */
     public function consume(
         string $topic,

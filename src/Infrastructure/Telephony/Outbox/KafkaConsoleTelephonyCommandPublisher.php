@@ -7,12 +7,17 @@ namespace Infrastructure\Telephony\Outbox;
 use Application\Shared\Ports\ConsoleCommandRunner;
 use Application\Telephony\Ports\TelephonyCommandPublisher;
 use Domain\Telephony\TelephonyOutboxMessage;
+use JsonException;
 use RuntimeException;
 
 final readonly class KafkaConsoleTelephonyCommandPublisher implements TelephonyCommandPublisher
 {
     public function __construct(private ConsoleCommandRunner $console) {}
 
+    /**
+     * @throws JsonException
+     * @throws RuntimeException
+     */
     public function publish(TelephonyOutboxMessage $message): void
     {
         $topic = (string) config('calls.telephony_commands_topic');

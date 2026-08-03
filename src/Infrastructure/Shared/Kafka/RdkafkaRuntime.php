@@ -13,6 +13,8 @@ final readonly class RdkafkaRuntime
 {
     /**
      * @param  list<mixed>  $arguments
+     *
+     * @throws RuntimeException
      */
     public function newInstance(string $className, array $arguments = []): object
     {
@@ -29,6 +31,8 @@ final readonly class RdkafkaRuntime
 
     /**
      * @param  list<mixed>  $arguments
+     *
+     * @throws RuntimeException
      */
     public function invoke(object $object, string $method, array $arguments = []): mixed
     {
@@ -39,6 +43,9 @@ final readonly class RdkafkaRuntime
         }
     }
 
+    /**
+     * @throws RuntimeException
+     */
     public function property(object $object, string $property): mixed
     {
         try {
@@ -48,6 +55,9 @@ final readonly class RdkafkaRuntime
         }
     }
 
+    /**
+     * @throws RuntimeException
+     */
     public function intConstant(string $name): int
     {
         if (! defined($name)) {

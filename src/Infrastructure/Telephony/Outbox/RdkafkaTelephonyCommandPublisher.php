@@ -7,12 +7,17 @@ namespace Infrastructure\Telephony\Outbox;
 use Application\Telephony\Ports\TelephonyCommandPublisher;
 use Domain\Telephony\TelephonyOutboxMessage;
 use Infrastructure\Shared\Kafka\RdkafkaRuntime;
+use JsonException;
 use RuntimeException;
 
 final readonly class RdkafkaTelephonyCommandPublisher implements TelephonyCommandPublisher
 {
     public function __construct(private RdkafkaRuntime $runtime) {}
 
+    /**
+     * @throws JsonException
+     * @throws RuntimeException
+     */
     public function publish(TelephonyOutboxMessage $message): void
     {
         $conf = $this->runtime->newInstance('RdKafka\\Conf');
@@ -41,6 +46,9 @@ final readonly class RdkafkaTelephonyCommandPublisher implements TelephonyComman
         }
     }
 
+    /**
+     * @throws JsonException
+     */
     private function payload(TelephonyOutboxMessage $message): string
     {
         return json_encode([

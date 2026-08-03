@@ -7,6 +7,7 @@ namespace Infrastructure\Shared\Kafka;
 use Application\Shared\Ports\DeadLetterQueue;
 use Application\Shared\Ports\Metrics;
 use Illuminate\Support\Facades\DB;
+use JsonException;
 
 final readonly class EloquentDeadLetterQueue implements DeadLetterQueue
 {
@@ -32,7 +33,7 @@ final readonly class EloquentDeadLetterQueue implements DeadLetterQueue
             'trace_id' => $traceId,
             'reason' => $reason,
             'raw_payload' => $rawPayload,
-            'decoded_payload' => $decodedPayload === null ? null : json_encode($decodedPayload, JSON_THROW_ON_ERROR),
+            'decoded_payload' => $this->encodedDecodedPayload($decodedPayload),
             'message_hash' => $this->messageHash($source, $topic, $partition, $offset, $messageKey, $reason, $rawPayload),
             'created_at' => now(),
         ]);
@@ -54,7 +55,7 @@ final readonly class EloquentDeadLetterQueue implements DeadLetterQueue
         string $reason,
         string $rawPayload,
     ): string {
-        return hash('sha256', json_encode([
+        return hash('sha256', serialize([
             'source' => $source,
             'topic' => $topic,
             'partition' => $partition,
@@ -62,6 +63,22 @@ final readonly class EloquentDeadLetterQueue implements DeadLetterQueue
             'message_key' => $messageKey,
             'reason' => $reason,
             'raw_payload' => $rawPayload,
-        ], JSON_THROW_ON_ERROR));
+        ]));
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $decodedPayload
+     */
+    private function encodedDecodedPayload(?array $decodedPayload): ?string
+    {
+        if ($decodedPayload === null) {
+            return null;
+        }
+
+        try {
+            return json_encode($decodedPayload, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            return null;
+        }
     }
 }

@@ -8,6 +8,8 @@ interface ConsoleCommandRunner
 {
     /**
      * @param  list<string>  $command
+     *
+     * @throws \RuntimeException
      */
     public function run(array $command, string $stdin, int $timeoutSeconds): ConsoleCommandResult;
 }

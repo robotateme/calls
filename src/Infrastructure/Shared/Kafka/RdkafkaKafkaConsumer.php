@@ -12,6 +12,9 @@ final readonly class RdkafkaKafkaConsumer implements KafkaConsumer
 {
     public function __construct(private RdkafkaRuntime $runtime) {}
 
+    /**
+     * @throws RuntimeException
+     */
     public function consume(
         string $topic,
         string $groupId,

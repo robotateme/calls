@@ -8,5 +8,9 @@ use Domain\Telephony\TelephonyOutboxMessage;
 
 interface TelephonyCommandPublisher
 {
+    /**
+     * @throws \JsonException
+     * @throws \RuntimeException
+     */
     public function publish(TelephonyOutboxMessage $message): void;
 }
