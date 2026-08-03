@@ -46,7 +46,7 @@ KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 Runtime image должен содержать PHP extension `php-rdkafka`. Если расширение не
 установлено, `rdkafka` adapters падают fail-fast.
 
-## Runtime Image
+## Runtime image
 
 В репозитории есть production Dockerfile:
 

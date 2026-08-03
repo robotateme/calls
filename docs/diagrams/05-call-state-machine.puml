@@ -14,7 +14,7 @@ state "До соединения" as before_connected {
     state "новый\n(new)" as new
     state "ожидает повтор\n(waiting)" as waiting
     state "запрошено назначение\n(assignment_requested)" as assignment_requested
-    state "звоним оператору\n(operator_dialing)" as operator_dialing
+    state "дозваниваемся до оператора\n(operator_dialing)" as operator_dialing
 
     [*] --> new : входящий звонок
 
@@ -24,7 +24,7 @@ state "До соединения" as before_connected {
     waiting --> assignment_requested : новая попытка,\nоператор найден
     waiting --> waiting : оператора нет,\nпопытки остались
 
-    assignment_requested --> operator_dialing : телефония начала\nзвонить оператору
+    assignment_requested --> operator_dialing : fact operator_dialing
     assignment_requested --> waiting : оператор не ответил,\nпопытки остались
     operator_dialing --> waiting : оператор не ответил,\nпопытки остались
 }

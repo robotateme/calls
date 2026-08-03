@@ -94,7 +94,7 @@ Runner:
 
 В CI есть два workflow:
 
-- `CI` — быстрый validation на PR/push: Composer validate, Pint, PHPStan, PHPUnit, frontend build.
+- `CI` — быстрый validation на PR/push: Composer validate, Pint, PHPStan, PHPUnit.
 - `Load Test` — ручной `workflow_dispatch` для `smoke`, `stress-large`, `soak-large` и `custom`, без деплоя.
 
 `Load Test` использует PostgreSQL и Redis service containers, JSONL consumer adapter и fake Telephony producer. Это не заменяет production Kafka replay, но стабильно проверяет consumer/queue/PostgreSQL/outbox контур в GitHub runner.
