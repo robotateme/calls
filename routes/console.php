@@ -43,7 +43,7 @@ $optionalConsoleInt = static function (mixed $value, string $name, ?int $default
 };
 $positiveConsoleInt = static fn (int $value): int => max(1, $value);
 
-Artisan::command('inspire', function () {
+Artisan::command('inspire', function (): void {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 

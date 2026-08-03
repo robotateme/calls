@@ -23,6 +23,7 @@ use Application\Telephony\Ports\TelephonyCommandOutboxWriter;
 use Application\Telephony\Ports\TelephonyCommandPublisher;
 use Application\Telephony\Ports\TelephonyOutboxWriteRepository;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Infrastructure\Calls\Logging\LaravelCallProcessingLogger;
 use Infrastructure\Calls\Persistence\EloquentCallRepository;
@@ -70,7 +71,7 @@ final class ArchitectureServiceProvider extends ServiceProvider
         $this->app->bind(QueueBus::class, LaravelQueueBus::class);
         $this->app->bind(TransactionManager::class, DatabaseTransactionManager::class);
 
-        $this->app->singleton(PrometheusMetricsStore::class, function ($app): PrometheusMetricsStore {
+        $this->app->singleton(PrometheusMetricsStore::class, function (Application $app): PrometheusMetricsStore {
             $configuredStore = config('calls.metrics_cache_store');
             $storeName = is_string($configuredStore) && $configuredStore !== ''
                 ? $configuredStore
@@ -82,10 +83,10 @@ final class ArchitectureServiceProvider extends ServiceProvider
                 (string) config('calls.metrics_cache_prefix'),
             );
         });
-        $this->app->singleton(PrometheusMetricsRenderer::class, fn ($app): PrometheusMetricsRenderer => new PrometheusMetricsRenderer(
+        $this->app->singleton(PrometheusMetricsRenderer::class, fn (Application $app): PrometheusMetricsRenderer => new PrometheusMetricsRenderer(
             $app->make(PrometheusMetricsStore::class),
         ));
-        $this->app->bind(Metrics::class, fn ($app): Metrics => new CompositeMetrics([
+        $this->app->bind(Metrics::class, fn (Application $app): Metrics => new CompositeMetrics([
             new LaravelLogMetrics($app->make(LoggerInterface::class)),
             $app->make(PrometheusMetricsStore::class),
         ]));

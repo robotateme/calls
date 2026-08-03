@@ -6,6 +6,7 @@ namespace Infrastructure\Telephony\Outbox;
 
 use Application\Telephony\Ports\TelephonyOutboxWriteRepository;
 use Domain\Telephony\TelephonyOutboxMessage;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutboxWriteRepository
@@ -18,7 +19,7 @@ final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutbo
             $records = DB::table('telephony_outbox')
                 ->where('status', 'pending')
                 ->whereNull('canceled_at')
-                ->where(function ($query): void {
+                ->where(function (Builder $query): void {
                     $query
                         ->whereNull('available_at')
                         ->orWhere('available_at', '<=', now());

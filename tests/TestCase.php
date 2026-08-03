@@ -8,7 +8,7 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
 {
-    public function createApplication()
+    public function createApplication(): Application
     {
         $this->forceTestingEnvironment();
 
