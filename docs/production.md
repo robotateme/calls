@@ -134,6 +134,24 @@ GET /metrics
 - DLQ depth by reason;
 - outbox pending/processing/failed depth.
 
+PromQL smoke после deploy-а:
+
+```promql
+up{job="calls"}
+rate(calls_received_total[5m])
+rate(calls_deduplicated_total[5m])
+sum by (from, to) (rate(call_transitions_total[5m]))
+sum by (result) (rate(operator_reservation_attempts_total[5m]))
+sum by (result) (rate(telephony_outbox_publish_total[5m]))
+sum by (reason) (rate(dead_letter_messages_total[5m]))
+sum by (status) (calls_current)
+operators_reserved_current
+sum by (status) (telephony_outbox_current)
+dead_letter_current
+oldest_waiting_call_age_seconds
+oldest_outbox_message_age_seconds
+```
+
 ## Rollout
 
 Порядок deploy-а:
