@@ -20,15 +20,18 @@ final readonly class MarkCallBridgeEstablishedHandler
 
     public function handle(MarkCallBridgeEstablishedFromKafkaCommand $command): void
     {
-        $this->transactions->run(function () use ($command): void {
-            $call = $this->calls->findForUpdateByExternalCallId(trim($command->externalCallId));
+        $normalizedExternalCallId = trim($command->externalCallId);
+        $operatorId = OperatorId::fromInt($command->operatorId);
+
+        $this->transactions->run(function () use ($normalizedExternalCallId, $operatorId, $command): void {
+            $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
                 return;
             }
 
             if (! $call->markConnected(
-                operatorId: OperatorId::fromInt($command->operatorId),
+                operatorId: $operatorId,
                 attempt: $command->assignmentAttempt,
                 connectedAt: Timestamp::now(),
             )) {
@@ -36,7 +39,7 @@ final readonly class MarkCallBridgeEstablishedHandler
             }
 
             $this->calls->save($call);
-            $this->operators->releaseForCall(OperatorId::fromInt($command->operatorId), $call->callId());
+            $this->operators->releaseForCall($operatorId, $call->callId());
         });
     }
 }

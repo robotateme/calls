@@ -22,8 +22,10 @@ final readonly class MarkCallHungUpHandler
 
     public function handle(MarkCallHungUpFromKafkaCommand $command): void
     {
-        $this->transactions->run(function () use ($command): void {
-            $call = $this->calls->findForUpdateByExternalCallId(trim($command->externalCallId));
+        $normalizedExternalCallId = trim($command->externalCallId);
+
+        $this->transactions->run(function () use ($normalizedExternalCallId): void {
+            $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
                 return;

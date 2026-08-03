@@ -28,10 +28,23 @@ final readonly class RegisterIncomingCallHandler
 
     public function handle(RegisterIncomingCallFromKafkaCommand $command): RegisterIncomingCallResult
     {
-        $result = $this->transactions->run(function () use ($command): RegisterIncomingCallResult {
-            $externalCallId = ExternalCallId::fromString($command->externalCallId);
-            $phone = PhoneNumber::fromString($command->phone);
-            $hangupPolicy = CallHangupPolicy::from(trim($command->operatorSearchHangupPolicy));
+        $normalizedExternalCallId = trim($command->externalCallId);
+        $normalizedPhone = trim($command->phone);
+        $normalizedKafkaMessageId = trim($command->kafkaMessageId);
+        $normalizedHangupPolicy = trim($command->operatorSearchHangupPolicy);
+
+        $result = $this->transactions->run(function () use (
+            $normalizedExternalCallId,
+            $normalizedPhone,
+            $normalizedKafkaMessageId,
+            $normalizedHangupPolicy,
+            $command,
+        ): RegisterIncomingCallResult {
+            $externalCallId = ExternalCallId::fromString($normalizedExternalCallId);
+            $phone = PhoneNumber::fromString($normalizedPhone);
+            $hangupPolicy = CallHangupPolicy::from($normalizedHangupPolicy);
+            $operatorSearchMaxAttempts = max(1, $command->operatorSearchMaxAttempts);
+            $operatorSearchRetryDelaySeconds = max(0, $command->operatorSearchRetryDelaySeconds);
             $existingCall = $this->callReader->findByExternalCallId($externalCallId);
 
             if ($existingCall !== null) {
@@ -41,9 +54,9 @@ final readonly class RegisterIncomingCallHandler
             $createdCall = $this->callWriter->createIncomingFromKafka(
                 externalCallId: $externalCallId,
                 phone: $phone,
-                kafkaMessageId: trim($command->kafkaMessageId),
-                operatorSearchMaxAttempts: OperatorSearchMaxAttempts::fromInt(max(1, $command->operatorSearchMaxAttempts)),
-                operatorSearchRetryDelay: OperatorSearchRetryDelay::fromSeconds(max(0, $command->operatorSearchRetryDelaySeconds)),
+                kafkaMessageId: $normalizedKafkaMessageId,
+                operatorSearchMaxAttempts: OperatorSearchMaxAttempts::fromInt($operatorSearchMaxAttempts),
+                operatorSearchRetryDelay: OperatorSearchRetryDelay::fromSeconds($operatorSearchRetryDelaySeconds),
                 operatorSearchHangupPolicy: $hangupPolicy,
             );
 
@@ -56,9 +69,9 @@ final readonly class RegisterIncomingCallHandler
         if ($result->created) {
             $this->events->publish(new IncomingCallRegistered(
                 callId: $result->callId,
-                externalCallId: trim($command->externalCallId),
-                phone: trim($command->phone),
-                kafkaMessageId: trim($command->kafkaMessageId),
+                externalCallId: $normalizedExternalCallId,
+                phone: $normalizedPhone,
+                kafkaMessageId: $normalizedKafkaMessageId,
             ));
             $this->processingQueue->enqueue($result->callId);
         }

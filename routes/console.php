@@ -16,6 +16,33 @@ use Illuminate\Support\Facades\Schema;
 use Infrastructure\Shared\Observability\PrometheusMetricsStore;
 use Symfony\Component\Console\Command\Command;
 
+$requireConsoleString = static function (mixed $value, string $name, string $source): string {
+    if (! is_scalar($value)) {
+        throw new InvalidArgumentException(sprintf('%s "%s" must be scalar.', $source, $name));
+    }
+
+    return (string) $value;
+};
+$optionalConsoleString = static function (mixed $value, string $name, ?string $default = null): ?string {
+    if ($value === null) {
+        return $default;
+    }
+
+    if (! is_scalar($value)) {
+        throw new InvalidArgumentException(sprintf('Option "%s" must be scalar.', $name));
+    }
+
+    $normalizedValue = trim((string) $value);
+
+    return $normalizedValue === '' ? $default : $normalizedValue;
+};
+$optionalConsoleInt = static function (mixed $value, string $name, ?int $default = null) use ($optionalConsoleString): ?int {
+    $normalizedValue = $optionalConsoleString($value, $name);
+
+    return $normalizedValue === null ? $default : (int) $normalizedValue;
+};
+$positiveConsoleInt = static fn (int $value): int => max(1, $value);
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
@@ -23,11 +50,18 @@ Artisan::command('inspire', function () {
 Artisan::command('calls:telephony-outbox:publish
     {--limit= : Maximum records to publish}
     {--retry-delay= : Seconds before retrying failed records}
-    {--max-attempts= : Attempts before marking a record failed}', function (PublishTelephonyOutboxHandler $handler): int {
+    {--max-attempts= : Attempts before marking a record failed}', function (PublishTelephonyOutboxHandler $handler) use ($optionalConsoleInt): int {
+    $configuredLimit = (int) config('calls.outbox_publish_limit');
+    $configuredRetryDelaySeconds = (int) config('calls.outbox_retry_delay_seconds');
+    $configuredMaxAttempts = (int) config('calls.outbox_max_attempts');
+    $publishLimit = $optionalConsoleInt($this->option('limit'), 'limit', $configuredLimit) ?? $configuredLimit;
+    $retryDelaySeconds = $optionalConsoleInt($this->option('retry-delay'), 'retry-delay', $configuredRetryDelaySeconds) ?? $configuredRetryDelaySeconds;
+    $maxAttempts = $optionalConsoleInt($this->option('max-attempts'), 'max-attempts', $configuredMaxAttempts) ?? $configuredMaxAttempts;
+
     $result = $handler->handle(
-        limit: (int) ($this->option('limit') ?? config('calls.outbox_publish_limit')),
-        retryDelaySeconds: (int) ($this->option('retry-delay') ?? config('calls.outbox_retry_delay_seconds')),
-        maxAttempts: (int) ($this->option('max-attempts') ?? config('calls.outbox_max_attempts')),
+        limit: $publishLimit,
+        retryDelaySeconds: $retryDelaySeconds,
+        maxAttempts: $maxAttempts,
     );
 
     $this->info(sprintf(
@@ -42,10 +76,15 @@ Artisan::command('calls:telephony-outbox:publish
 
 Artisan::command('calls:telephony-outbox:requeue-stale
     {--older-than= : Processing age in seconds before requeue}
-    {--limit= : Maximum records to requeue}', function (RequeueStaleTelephonyOutboxHandler $handler): int {
+    {--limit= : Maximum records to requeue}', function (RequeueStaleTelephonyOutboxHandler $handler) use ($optionalConsoleInt): int {
+    $configuredProcessingTimeoutSeconds = (int) config('calls.outbox_processing_timeout_seconds');
+    $configuredRequeueLimit = (int) config('calls.outbox_requeue_limit');
+    $processingTimeoutSeconds = $optionalConsoleInt($this->option('older-than'), 'older-than', $configuredProcessingTimeoutSeconds) ?? $configuredProcessingTimeoutSeconds;
+    $requeueLimit = $optionalConsoleInt($this->option('limit'), 'limit', $configuredRequeueLimit) ?? $configuredRequeueLimit;
+
     $requeued = $handler->handle(
-        olderThanSeconds: (int) ($this->option('older-than') ?? config('calls.outbox_processing_timeout_seconds')),
-        limit: (int) ($this->option('limit') ?? config('calls.outbox_requeue_limit')),
+        olderThanSeconds: $processingTimeoutSeconds,
+        limit: $requeueLimit,
     );
 
     $this->info(sprintf('Stale Telephony outbox records requeued: %d', $requeued));
@@ -55,10 +94,15 @@ Artisan::command('calls:telephony-outbox:requeue-stale
 
 Artisan::command('calls:operator-reservations:release-expired
     {--older-than= : Reservation age in seconds before release}
-    {--limit= : Maximum reservations to process}', function (ReleaseExpiredOperatorReservationsHandler $handler): int {
+    {--limit= : Maximum reservations to process}', function (ReleaseExpiredOperatorReservationsHandler $handler) use ($optionalConsoleInt): int {
+    $configuredReservationTtlSeconds = (int) config('calls.operator_reservation_ttl_seconds');
+    $configuredCleanupLimit = (int) config('calls.operator_reservation_cleanup_limit');
+    $reservationTtlSeconds = $optionalConsoleInt($this->option('older-than'), 'older-than', $configuredReservationTtlSeconds) ?? $configuredReservationTtlSeconds;
+    $cleanupLimit = $optionalConsoleInt($this->option('limit'), 'limit', $configuredCleanupLimit) ?? $configuredCleanupLimit;
+
     $released = $handler->handle(
-        olderThanSeconds: (int) ($this->option('older-than') ?? config('calls.operator_reservation_ttl_seconds')),
-        limit: (int) ($this->option('limit') ?? config('calls.operator_reservation_cleanup_limit')),
+        olderThanSeconds: $reservationTtlSeconds,
+        limit: $cleanupLimit,
     );
 
     $this->info(sprintf('Expired operator reservations released: %d', $released));
@@ -73,45 +117,23 @@ Artisan::command('calls:kafka:handle-message
     {--partition= : Kafka partition}
     {--offset= : Kafka offset}
     {--key= : Kafka message key}
-    {--trace-id= : Trace id}', function (HandleKafkaCallFactHandler $handler): int {
-    $stringArgument = function (string $name): string {
-        $value = $this->argument($name);
-
-        if (! is_scalar($value)) {
-            throw new InvalidArgumentException(sprintf('Argument "%s" must be scalar.', $name));
-        }
-
-        return (string) $value;
-    };
-    $stringOption = function (string $name, ?string $default = null): ?string {
-        $value = $this->option($name);
-
-        if ($value === null) {
-            return $default;
-        }
-
-        if (! is_scalar($value)) {
-            throw new InvalidArgumentException(sprintf('Option "%s" must be scalar.', $name));
-        }
-
-        $value = trim((string) $value);
-
-        return $value === '' ? $default : $value;
-    };
-    $intOption = function (string $name) use ($stringOption): ?int {
-        $value = $stringOption($name);
-
-        return $value === null ? null : (int) $value;
-    };
+    {--trace-id= : Trace id}', function (HandleKafkaCallFactHandler $handler) use ($requireConsoleString, $optionalConsoleString, $optionalConsoleInt): int {
+    $topic = $requireConsoleString($this->argument('topic'), 'topic', 'Argument');
+    $rawPayload = $requireConsoleString($this->argument('payload'), 'payload', 'Argument');
+    $source = $optionalConsoleString($this->option('source'), 'source', 'calls-console-consumer') ?? 'calls-console-consumer';
+    $partition = $optionalConsoleInt($this->option('partition'), 'partition');
+    $offset = $optionalConsoleInt($this->option('offset'), 'offset');
+    $messageKey = $optionalConsoleString($this->option('key'), 'key');
+    $traceId = $optionalConsoleString($this->option('trace-id'), 'trace-id');
 
     $handler->handle(new HandleKafkaCallFactCommand(
-        source: $stringOption('source', 'calls-console-consumer') ?? 'calls-console-consumer',
-        topic: $stringArgument('topic'),
-        partition: $intOption('partition'),
-        offset: $intOption('offset'),
-        messageKey: $stringOption('key'),
-        traceId: $stringOption('trace-id'),
-        rawPayload: $stringArgument('payload'),
+        source: $source,
+        topic: $topic,
+        partition: $partition,
+        offset: $offset,
+        messageKey: $messageKey,
+        traceId: $traceId,
+        rawPayload: $rawPayload,
     ));
 
     $this->info('Kafka message handled.');
@@ -124,39 +146,26 @@ Artisan::command('calls:kafka:consume
     {--group=calls : Consumer group id}
     {--source=calls-jsonl-consumer : Consumer source name}
     {--limit=100 : Maximum records to consume}
-    {--timeout-ms=1000 : Idle timeout in milliseconds}', function (ConsumeKafkaCallFactsHandler $handler): int {
-    $stringArgument = function (string $name): string {
-        $value = $this->argument($name);
+    {--timeout-ms=1000 : Idle timeout in milliseconds}', function (ConsumeKafkaCallFactsHandler $handler) use ($requireConsoleString, $optionalConsoleString, $optionalConsoleInt, $positiveConsoleInt): int {
+    $topic = $requireConsoleString($this->argument('topic'), 'topic', 'Argument');
+    $groupId = $optionalConsoleString($this->option('group'), 'group', 'calls') ?? 'calls';
+    $source = $optionalConsoleString($this->option('source'), 'source', 'calls-jsonl-consumer') ?? 'calls-jsonl-consumer';
+    $consumeLimit = $positiveConsoleInt($optionalConsoleInt($this->option('limit'), 'limit', 100) ?? 100);
+    $consumeTimeoutMs = $positiveConsoleInt($optionalConsoleInt($this->option('timeout-ms'), 'timeout-ms', 1000) ?? 1000);
 
-        if (! is_scalar($value)) {
-            throw new InvalidArgumentException(sprintf('Argument "%s" must be scalar.', $name));
-        }
+    try {
+        $consumed = $handler->handle(new ConsumeKafkaCallFactsCommand(
+            topic: $topic,
+            groupId: $groupId,
+            source: $source,
+            limit: $consumeLimit,
+            timeoutMs: $consumeTimeoutMs,
+        ));
+    } catch (Throwable $exception) {
+        $this->error(sprintf('Kafka consumer failed: %s', $exception->getMessage()));
 
-        return (string) $value;
-    };
-    $stringOption = function (string $name, string $default): string {
-        $value = $this->option($name);
-
-        if ($value === null) {
-            return $default;
-        }
-
-        if (! is_scalar($value)) {
-            throw new InvalidArgumentException(sprintf('Option "%s" must be scalar.', $name));
-        }
-
-        $value = trim((string) $value);
-
-        return $value === '' ? $default : $value;
-    };
-
-    $consumed = $handler->handle(new ConsumeKafkaCallFactsCommand(
-        topic: $stringArgument('topic'),
-        groupId: $stringOption('group', 'calls'),
-        source: $stringOption('source', 'calls-jsonl-consumer'),
-        limit: max(1, (int) $stringOption('limit', '100')),
-        timeoutMs: max(1, (int) $stringOption('timeout-ms', '1000')),
-    ));
+        return Command::FAILURE;
+    }
 
     $this->info(sprintf('Kafka consumer processed records: %d', $consumed));
 
@@ -166,22 +175,22 @@ Artisan::command('calls:kafka:consume
 Artisan::command('calls:dead-letter:list
     {--reason= : Filter by reason}
     {--include-resolved : Include resolved records}
-    {--limit=50 : Maximum records to show}', function (): int {
+    {--limit=50 : Maximum records to show}', function () use ($optionalConsoleString, $optionalConsoleInt, $positiveConsoleInt): int {
     if (! Schema::hasTable('dead_letter_messages')) {
         $this->warn('dead_letter_messages table does not exist.');
 
         return Command::SUCCESS;
     }
 
-    $limit = max(1, (int) ($this->option('limit') ?? 50));
+    $listLimit = $positiveConsoleInt($optionalConsoleInt($this->option('limit'), 'limit', 50) ?? 50);
+    $reason = $optionalConsoleString($this->option('reason'), 'reason');
     $query = DB::table('dead_letter_messages')
         ->select(['id', 'source', 'topic', 'message_partition', 'message_offset', 'message_key', 'trace_id', 'reason', 'resolved_at', 'created_at'])
         ->orderByDesc('id')
-        ->limit($limit);
-    $reason = $this->option('reason');
+        ->limit($listLimit);
 
-    if (is_scalar($reason) && trim((string) $reason) !== '') {
-        $query->where('reason', trim((string) $reason));
+    if ($reason !== null) {
+        $query->where('reason', $reason);
     }
 
     if ($this->option('include-resolved') !== true) {
@@ -211,20 +220,15 @@ Artisan::command('calls:dead-letter:list
 
 Artisan::command('calls:dead-letter:resolve
     {id : Dead letter id}
-    {--note= : Resolution note}', function (): int {
-    $id = $this->argument('id');
-
-    if (! is_scalar($id)) {
-        throw new InvalidArgumentException('Dead letter id must be scalar.');
-    }
-
-    $note = $this->option('note');
+    {--note= : Resolution note}', function () use ($requireConsoleString, $optionalConsoleString): int {
+    $deadLetterId = (int) $requireConsoleString($this->argument('id'), 'id', 'Argument');
+    $resolutionNote = $optionalConsoleString($this->option('note'), 'note');
     $updated = DB::table('dead_letter_messages')
-        ->where('id', (int) $id)
+        ->where('id', $deadLetterId)
         ->whereNull('resolved_at')
         ->update([
             'resolved_at' => now(),
-            'resolution_note' => is_scalar($note) ? trim((string) $note) : null,
+            'resolution_note' => $resolutionNote,
         ]);
 
     $this->info(sprintf('Dead letter records resolved: %d', $updated));
@@ -234,20 +238,22 @@ Artisan::command('calls:dead-letter:resolve
 
 Artisan::command('calls:dead-letter:prune-resolved
     {--older-than-days= : Resolved records retention in days}
-    {--limit= : Maximum records to delete}', function (): int {
+    {--limit= : Maximum records to delete}', function () use ($optionalConsoleInt, $positiveConsoleInt): int {
     if (! Schema::hasTable('dead_letter_messages')) {
         $this->warn('dead_letter_messages table does not exist.');
 
         return Command::SUCCESS;
     }
 
-    $olderThanDays = (int) ($this->option('older-than-days') ?? config('calls.dead_letter_retention_days'));
-    $limit = (int) ($this->option('limit') ?? config('calls.dead_letter_prune_limit'));
+    $configuredRetentionDays = (int) config('calls.dead_letter_retention_days');
+    $configuredPruneLimit = (int) config('calls.dead_letter_prune_limit');
+    $retentionDays = $positiveConsoleInt($optionalConsoleInt($this->option('older-than-days'), 'older-than-days', $configuredRetentionDays) ?? $configuredRetentionDays);
+    $pruneLimit = $positiveConsoleInt($optionalConsoleInt($this->option('limit'), 'limit', $configuredPruneLimit) ?? $configuredPruneLimit);
     $ids = DB::table('dead_letter_messages')
         ->whereNotNull('resolved_at')
-        ->where('resolved_at', '<=', now()->subDays(max(1, $olderThanDays)))
+        ->where('resolved_at', '<=', now()->subDays($retentionDays))
         ->orderBy('id')
-        ->limit(max(1, $limit))
+        ->limit($pruneLimit)
         ->pluck('id')
         ->all();
 
@@ -265,6 +271,8 @@ Artisan::command('calls:dead-letter:prune-resolved
 })->purpose('Prune resolved dead letter records after retention period');
 
 Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFactory $queues, PrometheusMetricsStore $prometheusMetricsStore): int {
+    $reservationTtlSeconds = (int) config('calls.operator_reservation_ttl_seconds');
+
     foreach ([
         'calls.depth',
         'telephony_outbox.depth',
@@ -304,7 +312,7 @@ Artisan::command('calls:metrics:snapshot', function (Metrics $metrics, QueueFact
         $metrics->gauge('operator_reservation.active', (int) DB::table('operators')->whereNotNull('reserved_call_id')->count());
         $metrics->gauge('operator_reservation.expired', (int) DB::table('operators')
             ->whereNotNull('reserved_call_id')
-            ->where('reserved_at', '<=', now()->subSeconds((int) config('calls.operator_reservation_ttl_seconds')))
+            ->where('reserved_at', '<=', now()->subSeconds($reservationTtlSeconds))
             ->count());
     }
 

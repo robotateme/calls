@@ -64,14 +64,17 @@ final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutbo
 
     public function requeueStaleProcessing(int $olderThanSeconds, int $limit): array
     {
-        return DB::transaction(function () use ($olderThanSeconds, $limit): array {
+        $processingTimeoutSeconds = max(0, $olderThanSeconds);
+        $requeueLimit = max(1, $limit);
+
+        return DB::transaction(function () use ($processingTimeoutSeconds, $requeueLimit): array {
             $records = DB::table('telephony_outbox')
                 ->where('status', 'processing')
                 ->whereNull('canceled_at')
-                ->where('processing_started_at', '<=', now()->subSeconds(max(0, $olderThanSeconds)))
+                ->where('processing_started_at', '<=', now()->subSeconds($processingTimeoutSeconds))
                 ->orderBy('processing_started_at')
                 ->orderBy('id')
-                ->limit(max(1, $limit))
+                ->limit($requeueLimit)
                 ->lock($this->forUpdateLock())
                 ->get();
 

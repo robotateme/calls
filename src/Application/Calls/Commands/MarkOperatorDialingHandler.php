@@ -18,15 +18,18 @@ final readonly class MarkOperatorDialingHandler
 
     public function handle(MarkOperatorDialingFromKafkaCommand $command): void
     {
-        $this->transactions->run(function () use ($command): void {
-            $call = $this->calls->findForUpdateByExternalCallId(trim($command->externalCallId));
+        $normalizedExternalCallId = trim($command->externalCallId);
+        $operatorId = OperatorId::fromInt($command->operatorId);
+
+        $this->transactions->run(function () use ($normalizedExternalCallId, $operatorId, $command): void {
+            $call = $this->calls->findForUpdateByExternalCallId($normalizedExternalCallId);
 
             if ($call === null) {
                 return;
             }
 
             if (! $call->markOperatorDialing(
-                operatorId: OperatorId::fromInt($command->operatorId),
+                operatorId: $operatorId,
                 attempt: $command->assignmentAttempt,
                 dialingAt: Timestamp::now(),
             )) {

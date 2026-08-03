@@ -12,6 +12,10 @@ use RuntimeException;
 
 final readonly class JsonLinesKafkaConsumer implements KafkaConsumer
 {
+    /**
+     * @throws InvalidArgumentException
+     * @throws RuntimeException
+     */
     public function consume(
         string $topic,
         string $groupId,
@@ -56,7 +60,8 @@ final readonly class JsonLinesKafkaConsumer implements KafkaConsumer
      */
     private function readLine(mixed $input, float $deadline): ?string
     {
-        $remainingMicroseconds = max(0, (int) (($deadline - microtime(true)) * 1000000));
+        $remainingSeconds = max(0.0, $deadline - microtime(true));
+        $remainingMicroseconds = (int) ($remainingSeconds * 1000000);
         $seconds = intdiv($remainingMicroseconds, 1000000);
         $microseconds = $remainingMicroseconds % 1000000;
         $read = [$input];
@@ -73,6 +78,10 @@ final readonly class JsonLinesKafkaConsumer implements KafkaConsumer
         return $line === false ? null : $line;
     }
 
+    /**
+     * @throws InvalidArgumentException
+     * @throws JsonException
+     */
     private function messageFromJsonLine(string $line, string $topic, string $source): KafkaConsumerMessage
     {
         try {

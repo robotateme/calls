@@ -59,6 +59,28 @@ final class KafkaConsumeCommandTest extends TestCase
         $this->assertSame('incoming-calls-0-9001', $call->kafka_message_id);
         $this->assertSame([(int) $call->id], $queue->callIds);
     }
+
+    public function test_it_returns_failure_when_consumer_transport_throws(): void
+    {
+        $this->app->instance(KafkaConsumer::class, new FailingKafkaConsumer('Kafka transport unavailable'));
+
+        $command = $this->artisan('calls:kafka:consume', [
+            'topic' => 'incoming-calls',
+            '--group' => 'calls-test',
+            '--source' => 'fake-consumer',
+            '--limit' => '10',
+            '--timeout-ms' => '100',
+        ]);
+
+        if (! $command instanceof PendingCommand) {
+            $this->fail('Expected a pending artisan command.');
+        }
+
+        $command
+            ->expectsOutputToContain('Kafka consumer failed: Kafka transport unavailable')
+            ->assertFailed()
+            ->run();
+    }
 }
 
 final readonly class FakeKafkaConsumer implements KafkaConsumer
@@ -88,6 +110,22 @@ final readonly class FakeKafkaConsumer implements KafkaConsumer
         }
 
         return $consumed;
+    }
+}
+
+final readonly class FailingKafkaConsumer implements KafkaConsumer
+{
+    public function __construct(private string $message) {}
+
+    public function consume(
+        string $topic,
+        string $groupId,
+        string $source,
+        int $limit,
+        int $timeoutMs,
+        callable $handler,
+    ): int {
+        throw new \RuntimeException($this->message);
     }
 }
 

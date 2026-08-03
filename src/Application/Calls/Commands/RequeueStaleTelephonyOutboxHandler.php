@@ -17,9 +17,11 @@ final readonly class RequeueStaleTelephonyOutboxHandler
     public function handle(int $olderThanSeconds, int $limit): int
     {
         $startedAt = microtime(true);
+        $processingTimeoutSeconds = max(0, $olderThanSeconds);
+        $requeueLimit = max(1, $limit);
         $requeued = count($this->outbox->requeueStaleProcessing(
-            olderThanSeconds: max(0, $olderThanSeconds),
-            limit: max(1, $limit),
+            olderThanSeconds: $processingTimeoutSeconds,
+            limit: $requeueLimit,
         ));
 
         $this->metrics->increment('telephony_outbox.stale_requeued', $requeued);

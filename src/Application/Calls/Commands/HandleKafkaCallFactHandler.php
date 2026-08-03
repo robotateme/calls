@@ -92,17 +92,17 @@ final readonly class HandleKafkaCallFactHandler
      */
     private function messageType(HandleKafkaCallFactCommand $command, array $decoded): string
     {
-        $type = $decoded['type'] ?? null;
+        $normalizedType = $this->trimmedStringOrNull($decoded['type'] ?? null);
 
-        if ($type === null && $command->topic === 'incoming-calls') {
+        if ($normalizedType === null && $command->topic === 'incoming-calls') {
             return 'incoming_call_registered';
         }
 
-        if (! is_string($type) || trim($type) === '') {
+        if ($normalizedType === null) {
             throw new InvalidKafkaCallFact('unknown_type', $decoded);
         }
 
-        return trim($type);
+        return $normalizedType;
     }
 
     /**
@@ -154,13 +154,15 @@ final readonly class HandleKafkaCallFactHandler
      */
     private function assertMessageKey(HandleKafkaCallFactCommand $command, array $payload): void
     {
-        $externalCallId = $payload['external_call_id'] ?? null;
+        $externalCallId = $this->trimmedStringOrNull($payload['external_call_id'] ?? null);
 
-        if (! is_string($externalCallId) || trim($externalCallId) === '') {
+        if ($externalCallId === null) {
             throw new InvalidKafkaCallFact('missing_external_call_id', $payload);
         }
 
-        if ($command->messageKey !== null && trim($command->messageKey) !== trim($externalCallId)) {
+        $messageKey = $this->trimmedStringOrNull($command->messageKey);
+
+        if ($messageKey !== null && $messageKey !== $externalCallId) {
             throw new InvalidKafkaCallFact('contract_violation', $payload);
         }
     }
@@ -220,13 +222,13 @@ final readonly class HandleKafkaCallFactHandler
      */
     private function string(array $payload, string $field): string
     {
-        $value = $payload[$field] ?? null;
+        $value = $this->trimmedStringOrNull($payload[$field] ?? null);
 
-        if (! is_string($value) || trim($value) === '') {
+        if ($value === null) {
             throw new InvalidKafkaCallFact('invalid_payload', $payload);
         }
 
-        return trim($value);
+        return $value;
     }
 
     /**
@@ -288,10 +290,10 @@ final readonly class HandleKafkaCallFactHandler
      */
     private function kafkaMessageId(array $payload, HandleKafkaCallFactCommand $command): string
     {
-        $value = $payload['kafka_message_id'] ?? null;
+        $value = $this->trimmedStringOrNull($payload['kafka_message_id'] ?? null);
 
-        if (is_string($value) && trim($value) !== '') {
-            return trim($value);
+        if ($value !== null) {
+            return $value;
         }
 
         return sprintf(
@@ -300,6 +302,17 @@ final readonly class HandleKafkaCallFactHandler
             $command->partition === null ? 'unknown' : (string) $command->partition,
             $command->offset === null ? substr(hash('sha256', $command->rawPayload), 0, 12) : (string) $command->offset,
         );
+    }
+
+    private function trimmedStringOrNull(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalizedValue = trim($value);
+
+        return $normalizedValue === '' ? null : $normalizedValue;
     }
 
     /**

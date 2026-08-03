@@ -29,12 +29,14 @@ final readonly class ReleaseExpiredOperatorReservationsHandler
     public function handle(int $olderThanSeconds, int $limit): int
     {
         $startedAt = microtime(true);
-        $failures = $this->transactions->run(function () use ($olderThanSeconds, $limit): array {
-            $expiredBefore = Timestamp::now()->minusSeconds(max(0, $olderThanSeconds));
+        $reservationTtlSeconds = max(0, $olderThanSeconds);
+        $processingLimit = max(1, $limit);
+        $failures = $this->transactions->run(function () use ($processingLimit, $reservationTtlSeconds): array {
+            $expiredBefore = Timestamp::now()->minusSeconds($reservationTtlSeconds);
             $now = Timestamp::now();
             $failures = [];
 
-            foreach ($this->calls->findExpiredAssignmentsForUpdate($expiredBefore, max(1, $limit)) as $call) {
+            foreach ($this->calls->findExpiredAssignmentsForUpdate($expiredBefore, $processingLimit) as $call) {
                 $operatorId = $call->assignedOperatorId();
 
                 if ($operatorId === null) {

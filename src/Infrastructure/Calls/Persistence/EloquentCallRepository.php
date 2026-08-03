@@ -73,6 +73,8 @@ final readonly class EloquentCallRepository implements CallReadRepository, CallW
 
     public function findExpiredAssignmentsForUpdate(Timestamp $expiredBefore, int $limit): array
     {
+        $processingLimit = max(1, $limit);
+
         $records = CallRecord::query()
             ->select('calls.*')
             ->join('operators', 'operators.id', '=', 'calls.operator_id')
@@ -85,7 +87,7 @@ final readonly class EloquentCallRepository implements CallReadRepository, CallW
             ->where('operators.reserved_at', '<=', $expiredBefore->toDatabaseString())
             ->orderBy('operators.reserved_at')
             ->orderBy('calls.id')
-            ->limit(max(1, $limit))
+            ->limit($processingLimit)
             ->lock($this->forUpdateLock())
             ->get();
 

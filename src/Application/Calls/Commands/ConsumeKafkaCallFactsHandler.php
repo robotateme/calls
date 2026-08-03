@@ -14,14 +14,21 @@ final readonly class ConsumeKafkaCallFactsHandler
         private HandleKafkaCallFactHandler $facts,
     ) {}
 
+    /**
+     * @throws \InvalidArgumentException
+     * @throws \RuntimeException
+     */
     public function handle(ConsumeKafkaCallFactsCommand $command): int
     {
+        $limit = max(1, $command->limit);
+        $timeoutMs = max(1, $command->timeoutMs);
+
         return $this->consumer->consume(
             topic: trim($command->topic),
             groupId: trim($command->groupId),
             source: trim($command->source),
-            limit: max(1, $command->limit),
-            timeoutMs: max(1, $command->timeoutMs),
+            limit: $limit,
+            timeoutMs: $timeoutMs,
             handler: function (KafkaConsumerMessage $message): void {
                 $this->facts->handle(new HandleKafkaCallFactCommand(
                     source: $message->source,

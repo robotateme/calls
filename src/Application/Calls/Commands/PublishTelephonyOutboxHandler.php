@@ -20,7 +20,10 @@ final readonly class PublishTelephonyOutboxHandler
     public function handle(int $limit, int $retryDelaySeconds, int $maxAttempts): PublishTelephonyOutboxResult
     {
         $startedAt = microtime(true);
-        $messages = $this->outbox->claimDue(max(1, $limit));
+        $claimLimit = max(1, $limit);
+        $normalizedRetryDelaySeconds = max(0, $retryDelaySeconds);
+        $normalizedMaxAttempts = max(1, $maxAttempts);
+        $messages = $this->outbox->claimDue($claimLimit);
         $published = 0;
         $failed = 0;
 
@@ -33,8 +36,8 @@ final readonly class PublishTelephonyOutboxHandler
                 $this->outbox->markFailed(
                     id: $message->id,
                     error: $exception->getMessage(),
-                    retryDelaySeconds: max(0, $retryDelaySeconds),
-                    maxAttempts: max(1, $maxAttempts),
+                    retryDelaySeconds: $normalizedRetryDelaySeconds,
+                    maxAttempts: $normalizedMaxAttempts,
                 );
                 $failed++;
             }

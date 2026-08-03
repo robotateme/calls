@@ -29,10 +29,9 @@ final readonly class LaravelCallProcessingRetryQueue implements CallProcessingRe
 
     private function queueDelaySeconds(int $delaySeconds): int
     {
-        $delay = max(
-            max(0, $delaySeconds),
-            max(0, (int) config('calls.operator_search_retry_min_delay_seconds')),
-        );
+        $requestedDelaySeconds = max(0, $delaySeconds);
+        $minimumDelaySeconds = max(0, (int) config('calls.operator_search_retry_min_delay_seconds'));
+        $delay = max($requestedDelaySeconds, $minimumDelaySeconds);
 
         $jitterSeconds = max(0, (int) config('calls.operator_search_retry_jitter_seconds'));
 
@@ -42,6 +41,10 @@ final readonly class LaravelCallProcessingRetryQueue implements CallProcessingRe
 
         $maxDelaySeconds = max(0, (int) config('calls.operator_search_retry_max_delay_seconds'));
 
-        return $maxDelaySeconds > 0 ? min($delay, $maxDelaySeconds) : $delay;
+        if ($maxDelaySeconds === 0) {
+            return $delay;
+        }
+
+        return min($delay, $maxDelaySeconds);
     }
 }
