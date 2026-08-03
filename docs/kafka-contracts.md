@@ -25,6 +25,9 @@ key = external_call_id
 Иначе `hangup`, `operator_dialing`, `bridge_established` и no-answer facts могут
 прийти в Calls out-of-order.
 
+Решение зафиксировано в
+[ADR-0003](adr/0003-kafka-message-key-external-call-id.md).
+
 ## Topics
 
 | Topic | Direction | Producer | Consumer |

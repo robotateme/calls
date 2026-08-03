@@ -20,6 +20,8 @@
 - Calls не должен держать HTTP-запрос к Telephony в своей transaction.
 
 Kafka contracts описаны в [kafka-contracts.md](kafka-contracts.md).
+Архитектурные решения по reservation, конкурентному claim, Kafka key и
+Prometheus scrape path зафиксированы в [adr/README.md](adr/README.md).
 
 ## Что реализовано
 
@@ -209,7 +211,8 @@ wave или Kafka/Telephony становится медленнее producers.
 Уже сделано:
 
 - индексы под allocation, retry scans, outbox claim и assignment lookup;
-- `FOR UPDATE SKIP LOCKED` для PostgreSQL/MySQL;
+- `FOR UPDATE SKIP LOCKED` для locked call/outbox batches на PostgreSQL/MySQL;
+- row lock при operator allocation;
 - jitter/backpressure для `calls-retry`;
 - stale outbox requeue;
 - expired reservation cleanup;

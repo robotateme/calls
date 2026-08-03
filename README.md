@@ -30,6 +30,7 @@ endpoint-ом `/metrics`.
 - [Архитектура](docs/architecture.md) - слои, границы и ownership.
 - [Решение](docs/solution.md) - call flow, state machine, retry/outbox/DLQ.
 - [Kafka contracts](docs/kafka-contracts.md) - topics, payloads, idempotency.
+- [ADR](docs/adr/README.md) - принятые архитектурные решения.
 - [Диаграммы](docs/diagrams.md) - PlantUML/PNG flow diagrams.
 - [Production](docs/production.md) - процессы, rollout, rollback.
 - [Load testing](docs/load-testing.md) - smoke/stress/soak проверки.

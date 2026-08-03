@@ -107,6 +107,11 @@ HTTP endpoint для scrape:
 GET /metrics
 ```
 
+`/metrics` должен оставаться дешёвым scrape endpoint-ом: он рендерит
+кешированные series и не выполняет `COUNT`, `MIN` или grouping по PostgreSQL на
+каждый scrape. Агрегации рабочих таблиц выполняет `calls:metrics:snapshot`.
+Решение зафиксировано в [ADR-0004](adr/0004-metrics-scrape-from-cache.md).
+
 Обязательные внешние метрики:
 
 - Kafka consumer lag по consumer group;

@@ -156,3 +156,12 @@ Allocation выбирает только операторов с `available=true
 Production processes перечислены в [production.md](production.md). Минимально
 нужны scheduler, workers `calls`/`calls-retry`, Kafka consumers и outbox
 publisher.
+
+## ADR
+
+Принятые архитектурные решения вынесены в [adr/README.md](adr/README.md):
+
+- локальная reservation оператора;
+- row locks и `SKIP LOCKED` для конкурентных workers;
+- Kafka message key = `external_call_id`;
+- `/metrics` отдаёт кешированный snapshot.
