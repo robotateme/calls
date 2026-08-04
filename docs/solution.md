@@ -26,21 +26,6 @@ Calls отвечает за короткий кусок процесса:
 Calls не ведёт разговор после `connected`. Если после соединения пришёл hangup
 или drop, это уже не меняет бизнес-статус звонка в Calls.
 
-## Что уже есть
-
-- Регистрация звонка из Kafka.
-- Дедупликация по `external_call_id`.
-- Очередь `ProcessIncomingCallJob`.
-- Обработчик `ProcessIncomingCallHandler`.
-- Правила звонка в `Domain\Calls\Call`.
-- Локальная бронь оператора.
-- `telephony_outbox`.
-- JSONL consumer для локальных проверок.
-- `rdkafka` consumer/producer для production.
-- DLQ в `dead_letter_messages`.
-- Cleanup-команды для outbox, броней и DLQ.
-- `/metrics` и snapshot метрик.
-
 ## Путь звонка
 
 1. Kafka присылает `incoming_call_registered`.
@@ -173,69 +158,9 @@ DLQ не чинит сообщение сама. Это место, где оп�
 какое сообщение пришло, почему оно не принято и что надо исправить у producer-а
 или в коде.
 
-## Что было исправлено
+## Где дальше читать
 
-- Два workers могли выбрать одного оператора.
-- БД менялась отдельно от внешнего действия.
-- Retry мог повторить внешнее действие.
-- `assigned` выглядел как финал без подтверждения Telephony.
-- Отсутствие оператора было exception.
-- Доступность оператора и бронь были смешаны.
-
-## Тесты
-
-Покрыто:
-
-- регистрация и дубль входящего звонка;
-- выбор оператора;
-- отсутствие оператора и retry;
-- финал после исчерпания попыток;
-- AFK и уже забронированные операторы;
-- поздние jobs после финала;
-- факты Telephony;
-- cancel assignment;
-- requeue зависшего outbox;
-- снятие старых броней;
-- DLQ list/resolve/prune;
-- snapshot метрик;
-- границы слоёв.
-
-## Риски
-
-- Если `external_call_id` нестабилен, дедупликация и порядок ломаются.
-- Если Kafka key не равен `external_call_id`, порядок одного звонка ломается.
-- Если facts начнут приходить дублями без гарантии уникальности, нужен inbox.
-- Рост DLQ значит проблему контракта, deploy-а или upstream producer-а.
-- Если Calls начнёт менять статус после `connected`, он выйдет за свою зону
-  ответственности.
-
-## Нагрузка
-
-Узкие места:
-
-- locks в БД при выборе оператора;
-- рост `calls` и `telephony_outbox`;
-- много delayed jobs в Redis;
-- Kafka lag;
-- рост DLQ;
-- синхронные логи.
-
-Уже сделано:
-
-- индексы под рабочие запросы;
-- `FOR UPDATE SKIP LOCKED` там, где workers забирают batch;
-- row lock при брони оператора;
-- jitter для `calls-retry`;
-- requeue зависшего outbox;
-- cleanup старых броней;
-- snapshot метрик.
-
-Дальше:
-
-1. Проверить Kafka partitions по `external_call_id` на реальной нагрузке.
-2. Добавить inbox, если facts перестанут быть уникальными.
-3. Вынести clients/operators в отдельные таблицы чтения или отдельный
-   routing-service.
-4. Архивировать завершённые `calls` и `published` outbox.
-5. Прогнать сценарии: нет операторов, массовый no-answer, hangup до соединения,
-   поздние facts после `connected`, lag Telephony.
+- Точный формат Kafka-сообщений: [kafka-contracts.md](kafka-contracts.md).
+- Почему выбраны Kafka, outbox, locks, бронь и слои: [adr/README.md](adr/README.md).
+- Production-процессы, метрики и rollback: [production.md](production.md).
+- Нагрузочные сценарии и отчёты: [load-testing.md](load-testing.md).

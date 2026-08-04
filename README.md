@@ -33,7 +33,7 @@ Laravel-сервис, который обрабатывает входящий �
 1. [Решение](docs/solution.md) - весь путь звонка простым текстом.
 2. [Kafka](docs/kafka-contracts.md) - какие сообщения приходят и уходят.
 3. [Архитектура](docs/architecture.md) - где лежит код и что нельзя смешивать.
-4. [ADR](docs/adr/README.md) - почему выбраны бронь, Kafka key, locks и
+4. [ADR](docs/adr/README.md) - почему выбраны Kafka, слои, бронь, locks и
    snapshot метрик.
 5. [Production](docs/production.md) - какие процессы должны работать постоянно.
 
@@ -70,16 +70,7 @@ Laravel-сервис, который обрабатывает входящий �
 - `telephony_outbox` - команды для Telephony;
 - `dead_letter_messages` - плохие Kafka-сообщения.
 
-Статусы звонка:
-
-- `new` - звонок записан, но оператор ещё не выбран.
-- `waiting` - ждём следующую попытку поиска оператора.
-- `assignment_requested` - оператор забронирован, команда для Telephony записана.
-- `operator_dialing` - Telephony звонит оператору.
-- `connected` - клиент и оператор соединены, Calls закончил работу по звонку.
-- `missed` - звонок не довели до соединения.
-- `callback_missed` - звонок не довели до соединения, нужен callback-сценарий.
-- `hangup_on_retry` - клиент повесил трубку во время ожидания повтора.
+Статусы и переходы описаны в [docs/solution.md](docs/solution.md).
 
 ## Локальный запуск
 
@@ -151,7 +142,7 @@ KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 Рабочий Docker-образ должен содержать `php-rdkafka`. Без расширения `rdkafka`-режим
 падает сразу.
 
-## Метрики
+## Метрики и Prometheus
 
 Endpoint:
 
@@ -165,20 +156,10 @@ GET /metrics
 http://laravel.test/metrics
 ```
 
-Минимальный набор метрик Calls:
+Проверить обязательные series:
 
-- `calls_received_total`
-- `calls_deduplicated_total`
-- `call_transitions_total{from,to}`
-- `operator_reservation_attempts_total{result}`
-- `telephony_outbox_publish_total{result}`
-- `dead_letter_messages_total{reason}`
-- `calls_current{status}`
-- `operators_reserved_current`
-- `telephony_outbox_current{status}`
-- `dead_letter_current`
-- `oldest_waiting_call_age_seconds`
-- `oldest_outbox_message_age_seconds`
+```bash
+make prometheus-smoke
+```
 
-Дополнительно снаружи нужно следить за Kafka lag, Redis queue depth,
-PostgreSQL slow queries/lock wait, outbox depth и DLQ depth.
+Полный список метрик и PromQL smoke queries: [docs/production.md](docs/production.md).

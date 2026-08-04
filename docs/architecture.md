@@ -53,98 +53,13 @@ Eloquent и строки БД - только формат хранения. В �
 Причина: обработчик в `Application` должен работать с понятным звонком,
 оператором или id, а не знать, как именно Laravel хранит строку в таблице.
 
-## Звонок
+## Где искать правила
 
-1. Kafka-сообщение создаёт `call`.
-2. `ProcessIncomingCallJob` вызывает `ProcessIncomingCallHandler`.
-3. Обработчик в транзакции ищет клиента, ищет оператора, меняет статус и пишет
-   команду в `telephony_outbox`.
-4. Publisher отправляет команду из `telephony_outbox` в Kafka.
-5. Telephony присылает факты обратно в Kafka.
-6. `HandleKafkaCallFactHandler` проверяет сообщение и вызывает нужный обработчик.
-7. Если сообщение плохое, оно попадает в `dead_letter_messages`.
-
-Подробности: [solution.md](solution.md) и [kafka-contracts.md](kafka-contracts.md).
-
-## Статусы
-
-- `new` - звонок записан.
-- `waiting` - ждём следующую попытку поиска оператора.
-- `assignment_requested` - оператор забронирован, команда записана.
-- `operator_dialing` - Telephony звонит оператору.
-- `connected` - клиент и оператор соединены.
-- `missed`, `callback_missed`, `hangup_on_retry` - финал без соединения.
-
-Переходы:
-
-- `new/waiting -> assignment_requested`;
-- `assignment_requested -> operator_dialing`;
-- `assignment_requested/operator_dialing -> connected`;
-- `assignment_requested/operator_dialing -> waiting|final`;
-- `new/waiting/assignment_requested/operator_dialing -> final`.
-
-После `connected` Calls больше не меняет бизнес-статус звонка. Разговор и
-доступность оператора после соединения принадлежат другим системам.
-
-## Telephony outbox
-
-Calls не отправляет команды напрямую. Он пишет их в `telephony_outbox` в той же
-транзакции, где меняет `calls`.
-
-Типы команд:
-
-- `call_assignment_requested`;
-- `call_assignment_canceled`;
-- `operator_search_retry_scheduled`;
-- `operator_search_exhausted`.
-
-Статусы outbox:
-
-- `pending`;
-- `processing`;
-- `published`;
-- `failed`.
-
-Publisher забирает готовые записи с row lock/`SKIP LOCKED`, отправляет в Kafka и
-пишет результат. Зависшие `processing` записи возвращаются командой
-`calls:telephony-outbox:requeue-stale`.
-
-Повторная отправка безопасна, потому что есть `idempotency_key`.
-
-Если publisher умер после отправки, но до записи `published`, он может отправить
-команду ещё раз. Telephony должна увидеть тот же `idempotency_key` и не сделать
-одно действие дважды.
-
-## Оператор
-
-Calls хранит только локальную бронь:
-
-- `operators.reserved_call_id`;
-- `operators.reserved_at`.
-
-`available` и `afk` приходят извне. Calls не ставит `available=true`, когда
-снимает бронь: после `connected` оператор может быть занят разговором.
-
-Оператор подходит, если:
-
-- `available=true`;
-- `afk=false`;
-- `reserved_call_id is null`.
-
-Бронь снимается только если `reserved_call_id` равен текущему `call_id`.
-
-## Надёжность
-
-- Повторное Kafka-сообщение не должно ломать состояние.
-- `external_call_id` уникален.
-- Важная смена статуса и команда Telephony пишутся в одной транзакции.
-- Retry поиска оператора имеет лимит, задержку, jitter и финальный статус.
-- Плохие Kafka-сообщения идут в `dead_letter_messages`.
-- Старые факты по другой попытке становятся no-op.
-- Перед внешним действием handler заново проверяет состояние звонка.
-
-Пример no-op: пришёл `operator_no_answer` по попытке 1, но звонок уже на попытке
-2. Calls не применяет этот факт к новой попытке.
+- Путь звонка, статусы, retry, outbox и DLQ: [solution.md](solution.md).
+- Kafka topics, payload и key: [kafka-contracts.md](kafka-contracts.md).
+- Почему выбраны слои, Kafka, locks, бронь и snapshot метрик:
+  [adr/README.md](adr/README.md).
+- Production-процессы: [production.md](production.md).
 
 ## Кто за что отвечает
 
@@ -157,19 +72,3 @@ Calls хранит только локальную бронь:
 | Telephony | Звонит оператору и соединяет разговор | Не выбирает оператора |
 | Operator Availability | Знает реальную доступность оператора | Не хранит статус звонка Calls |
 | Clients | Даёт клиента по телефону | Не участвует в назначении |
-
-## Процессы
-
-Нужны scheduler, queue workers, Kafka consumers и outbox publisher. Команды
-перечислены в [production.md](production.md).
-
-## ADR
-
-Решения записаны в [adr/README.md](adr/README.md):
-
-- локальная бронь оператора;
-- row locks и `SKIP LOCKED`;
-- Kafka key = `external_call_id`;
-- `/metrics` читает готовые метрики;
-- внутренняя архитектура разделена на слои;
-- Kafka - основной канал сервиса.
