@@ -14,6 +14,8 @@ Kafka - главный канал между Calls и Telephony.
 
 Redis queue - только внутренняя очередь Calls. Это не межсервисный договор.
 
+Почему Kafka выбрана основным каналом: [ADR-0006](adr/0006-kafka-as-authoritative-service-channel.md).
+
 ## Key
 
 Для всех сообщений одного звонка:
@@ -32,7 +34,7 @@ key = external_call_id
   `external_call_id=asterisk-linkedid-6001`;
 - bad: key `operator-15`, payload `external_call_id=asterisk-linkedid-6001`.
 
-См. [ADR-0003](adr/0003-kafka-message-key-external-call-id.md).
+Правило Kafka key: [ADR-0003](adr/0003-kafka-message-key-external-call-id.md).
 
 ## Topics
 

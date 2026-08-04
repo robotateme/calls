@@ -59,3 +59,4 @@ ADR не нужен для мелкой правки текста, переим�
 - [ADR-0003: Kafka key всегда равен external_call_id](0003-kafka-message-key-external-call-id.md)
 - [ADR-0004: /metrics отдаёт только готовые метрики](0004-metrics-scrape-from-cache.md)
 - [ADR-0005: Внутренняя архитектура разделена на слои](0005-internal-architecture-boundaries.md)
+- [ADR-0006: Kafka - основной канал сервиса](0006-kafka-as-authoritative-service-channel.md)
