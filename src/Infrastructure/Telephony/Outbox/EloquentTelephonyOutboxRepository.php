@@ -16,47 +16,109 @@ final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutbo
     public function claimDue(int $limit): array
     {
         return DB::transaction(function () use ($limit): array {
-            $records = DB::table('telephony_outbox')
-                ->where('status', 'pending')
-                ->whereNull('canceled_at')
-                ->where(function (Builder $query): void {
-                    $query
-                        ->whereNull('available_at')
-                        ->orWhere('available_at', '<=', now());
-                })
-                ->orderBy('id')
-                ->limit($limit)
-                ->lock($this->forUpdateLock())
-                ->get();
-
-            $ids = $records->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
-
-            if ($ids !== []) {
-                $now = now();
-
-                DB::table('telephony_outbox')
-                    ->whereIn('id', $ids)
-                    ->update([
-                        'status' => 'processing',
-                        'attempts' => DB::raw('attempts + 1'),
-                        'processing_started_at' => $now,
-                        'updated_at' => $now,
-                    ]);
+            if (DB::connection()->getDriverName() === 'pgsql') {
+                return $this->claimDueWithReturning($limit);
             }
 
-            $claimedRecords = $ids === []
-                ? collect()
-                : DB::table('telephony_outbox')
-                    ->whereIn('id', $ids)
-                    ->orderBy('id')
-                    ->get();
-
-            $messages = $claimedRecords
-                ->map(fn (object $record): TelephonyOutboxMessage => $this->mapper->toDomain((array) $record))
-                ->all();
-
-            return array_values($messages);
+            return $this->claimDuePortably($limit);
         });
+    }
+
+    /**
+     * PostgreSQL claims due records and returns their post-claim state in one
+     * round trip, so TelephonyOutboxMessage receives the incremented attempts.
+     *
+     * @return list<TelephonyOutboxMessage>
+     */
+    private function claimDueWithReturning(int $limit): array
+    {
+        $now = now()->toDateTimeString();
+        $bindings = [
+            'pending',
+            $now,
+            $limit,
+            'processing',
+            $now,
+            $now,
+        ];
+
+        $records = DB::select(<<<'SQL'
+            WITH due AS (
+                SELECT id
+                FROM telephony_outbox
+                WHERE status = ?
+                  AND canceled_at IS NULL
+                  AND (available_at IS NULL OR available_at <= ?)
+                ORDER BY id
+                LIMIT ?
+                FOR UPDATE SKIP LOCKED
+            ),
+            claimed AS (
+                UPDATE telephony_outbox AS t
+                SET status = ?,
+                    attempts = t.attempts + 1,
+                    processing_started_at = ?,
+                    updated_at = ?
+                FROM due
+                WHERE t.id = due.id
+                RETURNING t.*
+            )
+            SELECT *
+            FROM claimed
+            ORDER BY id
+            SQL, $bindings);
+
+        return $this->recordsToMessages($records);
+    }
+
+    /**
+     * Portable fallback for SQLite tests and non-PostgreSQL deployments.
+     *
+     * @return list<TelephonyOutboxMessage>
+     */
+    private function claimDuePortably(int $limit): array
+    {
+        $records = DB::table('telephony_outbox')
+            ->where('status', 'pending')
+            ->whereNull('canceled_at')
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('available_at')
+                    ->orWhere('available_at', '<=', now());
+            })
+            ->orderBy('id')
+            ->limit($limit)
+            ->lock($this->forUpdateLock())
+            ->get();
+
+        $ids = $records->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+
+        if ($ids !== []) {
+            $now = now();
+
+            DB::table('telephony_outbox')
+                ->whereIn('id', $ids)
+                ->update([
+                    'status' => 'processing',
+                    'attempts' => DB::raw('attempts + 1'),
+                    'processing_started_at' => $now,
+                    'updated_at' => $now,
+                ]);
+        }
+
+        $claimedRecords = $ids === []
+            ? collect()
+            : DB::table('telephony_outbox')
+                ->whereIn('id', $ids)
+                ->orderBy('id')
+                ->get();
+
+        $messages = $claimedRecords
+            ->map(fn (object $record): TelephonyOutboxMessage => $this->mapper->toDomain((array) $record))
+            ->values()
+            ->all();
+
+        return array_values($messages);
     }
 
     public function markPublished(int $id): void
@@ -132,5 +194,17 @@ final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutbo
         return in_array(DB::connection()->getDriverName(), ['mysql', 'pgsql'], true)
             ? 'FOR UPDATE SKIP LOCKED'
             : true;
+    }
+
+    /**
+     * @param  array<int, object>  $records
+     * @return list<TelephonyOutboxMessage>
+     */
+    private function recordsToMessages(array $records): array
+    {
+        return array_values(array_map(
+            fn (object $record): TelephonyOutboxMessage => $this->mapper->toDomain((array) $record),
+            $records,
+        ));
     }
 }
