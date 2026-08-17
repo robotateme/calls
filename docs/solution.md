@@ -119,10 +119,16 @@ Outbox-команды:
 Publisher:
 
 - забирает `pending`;
-- ставит `processing`;
+- ставит `processing` и увеличивает `attempts`;
 - отправляет в Kafka;
 - ставит `published` или `failed`;
 - старые `processing` возвращаются в `pending`.
+
+В PostgreSQL claim outbox делается атомарно через `UPDATE ... RETURNING`: одна
+операция лочит due records, переводит их в `processing`, увеличивает `attempts`
+и возвращает уже обновлённое состояние publisher-у. Для SQLite-тестов и
+не-PostgreSQL драйверов остаётся portable fallback с отдельным чтением после
+claim.
 
 Повторная отправка безопасна по `idempotency_key`.
 

@@ -395,7 +395,9 @@ lifecycle Laravel.
   изменённого агрегата;
 - `EloquentTelephonyOutboxRepository` claim-ит due records, увеличивает
   `attempts`, меняет `status`, requeue-ит stale processing records и фиксирует
-  publish/failure lifecycle;
+  publish/failure lifecycle. В PostgreSQL publish claim использует
+  `UPDATE ... RETURNING`, чтобы вернуть post-claim состояние без повторного
+  SELECT; остальные драйверы используют portable fallback;
 - `EloquentOperatorReservationRepository` выбирает доступного оператора под
   lock, ставит и снимает reservation;
 - `EloquentClientReadRepository` ищет клиента по телефону.

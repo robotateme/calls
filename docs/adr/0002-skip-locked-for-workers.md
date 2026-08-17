@@ -31,6 +31,12 @@ FOR UPDATE SKIP LOCKED
 - `telephony_outbox` publish/requeue;
 - выбора оператора внутри транзакции.
 
+Для PostgreSQL publish claim в `telephony_outbox` использует атомарный
+`UPDATE ... RETURNING`: worker одним SQL-запросом выбирает due records через
+`FOR UPDATE SKIP LOCKED`, переводит их в `processing`, увеличивает `attempts` и
+получает уже обновлённые строки для публикации. Для SQLite-тестов и
+не-PostgreSQL драйверов остаётся portable fallback.
+
 В SQLite-тестах остаётся обычный Laravel lock.
 
 Что это значит на практике: worker берёт только свободные строки. Если соседний
@@ -72,12 +78,12 @@ outbox это может дать двойную отправку, для опе
 
 - Нужно смотреть lock wait и slow queries.
 - Выбор конкретного оператора всё ещё может ждать lock этой строки.
-- Если это станет проблемой, следующий шаг - `FOR UPDATE SKIP LOCKED` для
-  operator claim или PostgreSQL `UPDATE ... RETURNING`.
+- Если это станет проблемой для operator claim, следующий шаг - отдельная
+  PostgreSQL-оптимизация по аналогии с outbox publish claim.
 
 ## Отклонили
 
 - Один worker на всё.
 - Advisory locks.
-- Только `UPDATE ... RETURNING`, потому что нужны тесты на SQLite и совместимость
-  с MySQL.
+- Только `UPDATE ... RETURNING` для всех драйверов, потому что нужны тесты на
+  SQLite и совместимость с MySQL.
