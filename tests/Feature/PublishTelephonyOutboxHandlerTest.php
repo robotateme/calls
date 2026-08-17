@@ -57,6 +57,34 @@ final class PublishTelephonyOutboxHandlerTest extends TestCase
         $this->assertContains(['telephony_outbox_publish_total', 0, ['result' => 'failed']], $metrics->increments);
     }
 
+    public function test_claimed_message_contains_incremented_attempts_from_database(): void
+    {
+        $publisher = new FakeTelephonyCommandPublisher;
+        $this->app->instance(TelephonyCommandPublisher::class, $publisher);
+        $id = $this->insertOutbox([
+            'external_call_id' => 'asterisk-linkedid-5010',
+            'type' => 'call_assignment_requested',
+            'idempotency_key' => 'asterisk-linkedid-5010:call_assignment_requested:5',
+            'payload' => [
+                'external_call_id' => 'asterisk-linkedid-5010',
+                'operator_id' => 10,
+                'assignment_attempt' => 5,
+            ],
+            'attempts' => 4,
+        ]);
+
+        $result = $this->handler()->handle(limit: 10, retryDelaySeconds: 5, maxAttempts: 10);
+
+        $this->assertSame(1, $result->claimed);
+        $this->assertCount(1, $publisher->published);
+        $this->assertSame(5, $publisher->published[0]->attempts);
+        $this->assertDatabaseHas('telephony_outbox', [
+            'id' => $id,
+            'status' => 'published',
+            'attempts' => 5,
+        ]);
+    }
+
     public function test_it_reschedules_failed_publish_before_max_attempts(): void
     {
         $publisher = new FakeTelephonyCommandPublisher(throws: true);
