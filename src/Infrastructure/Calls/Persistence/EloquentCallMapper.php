@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infrastructure\Calls\Persistence;
 
 use App\Models\Call as CallRecord;
+use Application\Calls\IncomingCallRegistration;
 use DateTimeInterface;
 use Domain\Calls\Call;
 use Domain\Calls\CallHangupPolicy;
@@ -72,22 +73,16 @@ final readonly class EloquentCallMapper
     /**
      * @return array<string, mixed>
      */
-    public function toIncomingInsertData(
-        ExternalCallId $externalCallId,
-        PhoneNumber $phone,
-        string $kafkaMessageId,
-        OperatorSearchMaxAttempts $operatorSearchMaxAttempts,
-        OperatorSearchRetryDelay $operatorSearchRetryDelay,
-        CallHangupPolicy $operatorSearchHangupPolicy,
-    ): array {
+    public function toIncomingInsertData(IncomingCallRegistration $registration): array
+    {
         return [
-            'external_call_id' => $externalCallId->toString(),
-            'phone' => $phone->toString(),
-            'kafka_message_id' => $kafkaMessageId,
-            'status' => CallStatus::New->value,
-            'operator_search_max_attempts' => $operatorSearchMaxAttempts->toInt(),
-            'operator_search_retry_delay_seconds' => $operatorSearchRetryDelay->seconds(),
-            'operator_search_hangup_policy' => $operatorSearchHangupPolicy->value,
+            'external_call_id' => $registration->externalCallId->toString(),
+            'phone' => $registration->phone->toString(),
+            'kafka_message_id' => $registration->kafkaMessageId,
+            'status' => $registration->initialStatus()->value,
+            'operator_search_max_attempts' => $registration->operatorSearchMaxAttempts->toInt(),
+            'operator_search_retry_delay_seconds' => $registration->operatorSearchRetryDelay->seconds(),
+            'operator_search_hangup_policy' => $registration->operatorSearchHangupPolicy->value,
         ];
     }
 

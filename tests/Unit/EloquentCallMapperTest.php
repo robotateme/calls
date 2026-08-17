@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Models\Call as CallRecord;
+use Application\Calls\IncomingCallRegistration;
 use Domain\Calls\Call;
 use Domain\Calls\CallHangupPolicy;
 use Domain\Calls\CallId;
@@ -75,7 +76,7 @@ final class EloquentCallMapperTest extends TestCase
 
     public function test_it_maps_incoming_call_values_to_insert_data(): void
     {
-        $data = $this->mapper()->toIncomingInsertData(
+        $registration = new IncomingCallRegistration(
             externalCallId: ExternalCallId::fromString('asterisk-linkedid-1600'),
             phone: PhoneNumber::fromString('+15550001600'),
             kafkaMessageId: 'incoming-calls-0-1600',
@@ -84,6 +85,9 @@ final class EloquentCallMapperTest extends TestCase
             operatorSearchHangupPolicy: CallHangupPolicy::HangupOnRetry,
         );
 
+        $data = $this->mapper()->toIncomingInsertData($registration);
+
+        $this->assertSame(CallStatus::New, $registration->initialStatus());
         $this->assertSame([
             'external_call_id' => 'asterisk-linkedid-1600',
             'phone' => '+15550001600',

@@ -5,15 +5,12 @@ declare(strict_types=1);
 namespace Infrastructure\Calls\Persistence;
 
 use App\Models\Call as CallRecord;
+use Application\Calls\IncomingCallRegistration;
 use Application\Calls\Ports\CallReadRepository;
 use Application\Calls\Ports\CallWriteRepository;
 use Domain\Calls\Call;
-use Domain\Calls\CallHangupPolicy;
 use Domain\Calls\CallStatus;
 use Domain\Calls\ExternalCallId;
-use Domain\Calls\OperatorSearchMaxAttempts;
-use Domain\Calls\OperatorSearchRetryDelay;
-use Domain\Calls\PhoneNumber;
 use Domain\Shared\Timestamp;
 use Illuminate\Support\Facades\DB;
 
@@ -21,22 +18,9 @@ final readonly class EloquentCallRepository implements CallReadRepository, CallW
 {
     public function __construct(private readonly EloquentCallMapper $mapper) {}
 
-    public function createIncomingFromKafka(
-        ExternalCallId $externalCallId,
-        PhoneNumber $phone,
-        string $kafkaMessageId,
-        OperatorSearchMaxAttempts $operatorSearchMaxAttempts,
-        OperatorSearchRetryDelay $operatorSearchRetryDelay,
-        CallHangupPolicy $operatorSearchHangupPolicy,
-    ): Call {
-        $record = CallRecord::query()->create($this->mapper->toIncomingInsertData(
-            externalCallId: $externalCallId,
-            phone: $phone,
-            kafkaMessageId: $kafkaMessageId,
-            operatorSearchMaxAttempts: $operatorSearchMaxAttempts,
-            operatorSearchRetryDelay: $operatorSearchRetryDelay,
-            operatorSearchHangupPolicy: $operatorSearchHangupPolicy,
-        ));
+    public function createIncoming(IncomingCallRegistration $registration): Call
+    {
+        $record = CallRecord::query()->create($this->mapper->toIncomingInsertData($registration));
 
         return $this->mapper->toDomain($record);
     }

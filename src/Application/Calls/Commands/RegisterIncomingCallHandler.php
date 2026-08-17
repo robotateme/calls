@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Application\Calls\Commands;
 
+use Application\Calls\IncomingCallRegistration;
 use Application\Calls\Ports\CallProcessingQueue;
 use Application\Calls\Ports\CallReadRepository;
 use Application\Calls\Ports\CallWriteRepository;
@@ -53,14 +54,14 @@ final readonly class RegisterIncomingCallHandler
                 return new RegisterIncomingCallResult($existingCall->id(), false);
             }
 
-            $createdCall = $this->callWriter->createIncomingFromKafka(
+            $createdCall = $this->callWriter->createIncoming(new IncomingCallRegistration(
                 externalCallId: $externalCallId,
                 phone: $phone,
                 kafkaMessageId: $normalizedKafkaMessageId,
                 operatorSearchMaxAttempts: OperatorSearchMaxAttempts::fromInt($operatorSearchMaxAttempts),
                 operatorSearchRetryDelay: OperatorSearchRetryDelay::fromSeconds($operatorSearchRetryDelaySeconds),
                 operatorSearchHangupPolicy: $hangupPolicy,
-            );
+            ));
 
             return new RegisterIncomingCallResult(
                 callId: $createdCall->id(),

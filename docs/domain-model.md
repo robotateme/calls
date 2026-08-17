@@ -69,9 +69,58 @@ Call - Aggregate Root / Entity
 - `Domain\Calls\CallHangupPolicy`
 - `Domain\Shared\Timestamp`
 
-`kafka_message_id` хранится в таблице `calls` как persistence/idempotency
-metadata регистрации входящего Kafka-сообщения. Сейчас это не часть доменного
-объекта `Call`.
+`kafka_message_id` хранится в таблице `calls` как ingress/idempotency metadata
+регистрации входящего Kafka-сообщения. Сейчас это не часть доменного объекта
+`Call`.
+
+## Модель создания входящего звонка
+
+Создание нового звонка не начинается с полноценного `Call`: до INSERT у него ещё
+нет `CallId`, потому что id выдаёт база.
+
+Для этого есть явная application-модель:
+
+```text
+Application\Calls\IncomingCallRegistration
+```
+
+Она содержит данные регистрации:
+
+```text
+ExternalCallId
+PhoneNumber
+kafkaMessageId
+OperatorSearchMaxAttempts
+OperatorSearchRetryDelay
+CallHangupPolicy
+initialStatus() → CallStatus::New
+```
+
+Именно эта модель задаёт creation semantics нового входящего звонка: начальный
+статус `new`. `EloquentCallMapper` не выбирает `CallStatus::New` сам, а только
+переводит уже подготовленную модель регистрации в persistence representation для
+INSERT.
+
+Поток создания:
+
+```text
+RegisterIncomingCallHandler
+    ↓
+IncomingCallRegistration
+    ↓
+CallWriteRepository::createIncoming(...)
+    ↓
+EloquentCallMapper::toIncomingInsertData(...)
+    ↓
+calls INSERT
+    ↓
+EloquentCallMapper::toDomain(...)
+    ↓
+Call::restore(...)
+```
+
+Так `kafka_message_id` остаётся metadata регистрации, а доменный `Call` после
+сохранения восстанавливается уже с настоящим `CallId`.
 
 ## Граница агрегата
 
@@ -316,9 +365,10 @@ lifecycle Laravel.
 `Infrastructure\Calls\Persistence\EloquentCallMapper`
 
 - `toDomain()` восстанавливает `Call` из `App\Models\Call`;
-- `toIncomingInsertData()` переводит значения входящего Kafka-звонка в данные
-  для INSERT;
+- `toIncomingInsertData()` переводит `IncomingCallRegistration` в данные для
+  INSERT;
 - `toUpdateData()` переводит изменённый `Call` в данные для UPDATE;
+- не выбирает начальный статус нового звонка;
 - не управляет `updated_at`, транзакциями, locks и lifecycle.
 
 `Infrastructure\Telephony\Outbox\EloquentTelephonyOutboxMapper`
@@ -341,7 +391,8 @@ lifecycle Laravel.
 Соответствующие repository:
 
 - `EloquentCallRepository` делает запросы по `calls`, lock для обработки,
-  создание входящего звонка и сохранение изменённого агрегата;
+  создание входящего звонка из `IncomingCallRegistration` и сохранение
+  изменённого агрегата;
 - `EloquentTelephonyOutboxRepository` claim-ит due records, увеличивает
   `attempts`, меняет `status`, requeue-ит stale processing records и фиксирует
   publish/failure lifecycle;
