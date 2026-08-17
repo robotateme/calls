@@ -2,8 +2,8 @@
     "$schema": "https://getcomposer.org/schema.json",
     "name": "laravel/laravel",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "Kafka-first Laravel service for processing inbound calls until client-operator connection with outbox, DLQ, metrics, and hexagonal architecture.",
+    "keywords": ["php", "laravel", "kafka", "telephony", "call-processing", "outbox", "dlq", "prometheus", "hexagonal-architecture"],
     "license": "MIT",
     "require": {
         "php": "^8.4",
