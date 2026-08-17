@@ -1,0 +1,28 @@
+@startuml
+title 4. Telephony outbox publishing
+
+participant Scheduler
+participant "Outbox publisher" as Publisher
+database Outbox
+queue Kafka
+
+Scheduler -> Publisher: calls:telephony-outbox:publish
+Publisher -> Outbox: claim due records\ncanceled_at is null
+
+loop claimed commands
+    Publisher -> Kafka: publish command\nkey=external_call_id
+    alt publish ok
+        Publisher -> Outbox: status=published
+    else publish failed and retry remains
+        Publisher -> Outbox: status=pending\navailable later
+    else attempts exhausted
+        Publisher -> Outbox: status=failed
+    end
+end
+
+note right of Outbox
+  PostgreSQL claim uses UPDATE ... RETURNING.
+  Portable fallback rereads after claim.
+end note
+
+@enduml

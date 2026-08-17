@@ -5,7 +5,7 @@ PlantUML и PNG лежат рядом.
 Обновить PNG:
 
 ```bash
-plantuml -tpng docs/diagrams/*.puml
+plantuml -tpng docs/ru/diagrams/*.puml
 ```
 
 ## Превью

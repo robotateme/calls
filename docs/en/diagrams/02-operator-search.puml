@@ -1,0 +1,32 @@
+@startuml
+title 2. Operator search
+
+participant "ProcessIncomingCallJob" as Job
+participant Calls
+database PostgreSQL
+database Outbox
+queue "calls-retry" as Retry
+
+Job -> Calls: process call
+Calls -> PostgreSQL: lock call
+Calls -> PostgreSQL: find client
+Calls -> PostgreSQL: reserve operator with SKIP LOCKED
+
+alt operator found
+    Calls -> PostgreSQL: status=assignment_requested
+    Calls -> Outbox: call_assignment_requested
+else no operator and attempts remain
+    Calls -> PostgreSQL: status=waiting
+    Calls -> Outbox: operator_search_retry_scheduled
+    Calls -> Retry: schedule next attempt
+else attempts exhausted
+    Calls -> PostgreSQL: final status by policy
+    Calls -> Outbox: operator_search_exhausted
+end
+
+note right of Outbox
+  Status change and outbox command
+  are persisted in one DB transaction.
+end note
+
+@enduml

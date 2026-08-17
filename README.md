@@ -1,87 +1,87 @@
 # Calls
 
-Laravel-сервис, который обрабатывает входящий звонок до соединения клиента с
-оператором.
+[Русская версия](README.ru.md)
 
-Сервис без пользовательского UI. HTTP нужен только для `/metrics`.
+Calls is a Laravel service that processes an inbound call until a client and an
+operator are connected.
 
-Если коротко: Calls берёт факт входящего звонка, пытается найти оператора,
-просит Telephony соединить клиента с оператором и ждёт ответ от Telephony. Как
-только клиент и оператор соединены, Calls заканчивает свою часть работы.
+The service has no user-facing UI. HTTP is limited to `/metrics`.
 
-## Что делает
+In short: Calls receives an inbound-call fact, finds a client, reserves an
+operator, asks Telephony to connect them, and waits for Telephony facts. Once the
+call reaches `connected`, Calls releases its local reservation and stops owning
+the call flow.
 
-- Читает входящие звонки из Kafka.
-- Не создаёт дубль, если `external_call_id` уже есть.
-- Ищет клиента по телефону.
-- Ищет оператора и ставит короткую локальную бронь.
-- Пишет команды для Telephony в `telephony_outbox`.
-- Читает ответы Telephony из Kafka.
-- После `connected` снимает бронь и больше не ведёт звонок.
+## What It Does
 
-Что не делает:
+- Reads inbound calls from Kafka.
+- Deduplicates by `external_call_id`.
+- Looks up a client by phone number.
+- Finds an operator and creates a short local reservation.
+- Writes Telephony commands to `telephony_outbox`.
+- Reads Telephony facts from Kafka.
+- Releases the reservation after `connected`.
 
-- не принимает звонки через HTTP;
-- не звонит в Telephony напрямую;
-- не управляет SIP и разговором после `connected`;
-- не решает, доступен ли оператор после соединения.
+What it does not do:
 
-## Как читать проект
+- it does not accept calls over HTTP;
+- it does not call Telephony directly;
+- it does not manage SIP or the conversation after `connected`;
+- it does not decide whether an operator is available after connection.
 
-Если нужно понять поведение звонка, читайте в таком порядке:
+## Reading Order
 
-1. [Решение](docs/solution.md) - весь путь звонка простым текстом.
-2. [Kafka](docs/kafka-contracts.md) - какие сообщения приходят и уходят.
-3. [Архитектура](docs/architecture.md) - где лежит код и что нельзя смешивать.
-4. [Domain Model](docs/domain-model.md) - что такое `Call` aggregate root и как
-   mapper-ы восстанавливают доменную модель из БД.
-5. [ADR](docs/adr/README.md) - почему выбраны Kafka, слои, бронь, locks и
-   snapshot метрик.
-6. [Production](docs/production.md) - какие процессы должны работать постоянно.
+1. [Solution](docs/en/solution.md) - the full call path in plain language.
+2. [Kafka](docs/en/kafka-contracts.md) - incoming and outgoing messages.
+3. [Architecture](docs/en/architecture.md) - layers and dependency rules.
+4. [Domain Model](docs/en/domain-model.md) - `Call` aggregate root and
+   persistence mapping.
+5. [ADR](docs/en/adr/README.md) - why Kafka, layers, reservations, locks, and
+   metrics snapshots were chosen.
+6. [Production](docs/en/production.md) - required long-running processes.
 
-## Документы
+## Documents
 
-- [Архитектура](docs/architecture.md)
-- [Domain Model и Infrastructure Mapping](docs/domain-model.md)
-- [Решение](docs/solution.md)
-- [Kafka](docs/kafka-contracts.md)
-- [ADR](docs/adr/README.md)
-- [Диаграммы](docs/diagrams.md)
-- [Production](docs/production.md)
-- [Нагрузка](docs/load-testing.md)
+- [Architecture](docs/en/architecture.md)
+- [Domain Model and Infrastructure Mapping](docs/en/domain-model.md)
+- [Solution](docs/en/solution.md)
+- [Kafka](docs/en/kafka-contracts.md)
+- [ADR](docs/en/adr/README.md)
+- [Diagrams](docs/en/diagrams.md)
+- [Production](docs/en/production.md)
+- [Load Testing](docs/en/load-testing.md)
 
-## Основные правила
+## Main Rules
 
-- Главный вход - Kafka.
-- `external_call_id` - главный id звонка. По нему Calls понимает, что это тот же
-  самый звонок, а не новый.
-- Kafka key для событий одного звонка всегда равен `external_call_id`.
-- Статус `operator_dialing` используется и снаружи, и внутри Calls.
-- Бронь оператора хранится в `operators.reserved_call_id` и
+- Kafka is the authoritative ingress.
+- `external_call_id` is the business key of a call.
+- Kafka key for all events of one call must be `external_call_id`.
+- `operator_dialing` is the current external fact and internal Calls status.
+- Operator reservation is stored in `operators.reserved_call_id` and
   `operators.reserved_at`.
-- Команды для Telephony всегда идут через `telephony_outbox`.
-- `/metrics` отдаёт готовые метрики и не делает тяжёлые SQL-запросы.
-- Плохие Kafka-сообщения не применяются к звонку. Они пишутся в
-  `dead_letter_messages`.
-- После `connected` Calls не откатывает звонок назад по поздним фактам.
+- Telephony commands always go through `telephony_outbox`.
+- `/metrics` renders cached metrics only and does not run heavy SQL.
+- Invalid Kafka messages go to `dead_letter_messages`.
+- Facts after `connected` do not move the Calls state machine backwards.
 
-## Таблицы
+## Tables
 
-- `calls` - звонок и его статус до `connected`;
-- `clients` - поиск клиента по телефону;
-- `operators` - внешняя доступность плюс локальная бронь Calls;
-- `telephony_outbox` - команды для Telephony;
-- `dead_letter_messages` - плохие Kafka-сообщения.
+- `calls` - call state until `connected`;
+- `clients` - client lookup by phone number;
+- `operators` - external availability plus Calls local reservation;
+- `telephony_outbox` - commands for Telephony;
+- `dead_letter_messages` - Kafka messages that cannot be safely applied.
 
-Статусы и переходы описаны в [docs/solution.md](docs/solution.md).
+Statuses and transitions are described in
+[docs/en/solution.md](docs/en/solution.md).
 
-## Локальный запуск
+## Local Run
 
-Сервисы в Docker:
+Docker services:
 
 - PostgreSQL: `pgsql:5432`
 - Redis: `redis:6379`
-- Kafka: `kafka:9092` внутри Docker, `localhost:9094` с хоста
+- Kafka: `kafka:9092` in Docker, `localhost:9094` from host
 - Kafka UI: `http://localhost:8081`
 - Prometheus: `http://localhost:9090`
 
@@ -92,16 +92,15 @@ cp .env.example .env
 ./vendor/bin/sail artisan migrate
 ```
 
-Проверки:
+Checks:
 
 ```bash
 ./vendor/bin/sail test
 ./vendor/bin/sail composer phpstan
 ```
 
-PostgreSQL integration tests запускаются обычным `php artisan test`, если
-доступна БД из `PG_INTEGRATION_*`. В CI PostgreSQL поднимается отдельным service.
-Локально можно поднять `pgsql` через Sail и указать тестовую БД:
+PostgreSQL integration tests run as part of `php artisan test` when a database
+from `PG_INTEGRATION_*` is available. CI starts PostgreSQL as a service. Locally:
 
 ```bash
 ./vendor/bin/sail up -d pgsql
@@ -110,7 +109,7 @@ PG_INTEGRATION_HOST=127.0.0.1 PG_INTEGRATION_DATABASE=testing php artisan test
 
 ## Make
 
-Частые команды:
+Common commands:
 
 ```bash
 make up
@@ -135,14 +134,14 @@ make validate
 
 ## Kafka
 
-Локально:
+Local mode:
 
 ```env
 KAFKA_CONSUMER_ADAPTER=jsonl
 KAFKA_PRODUCER_ADAPTER=console
 ```
 
-Для `rdkafka`:
+`rdkafka` mode:
 
 ```env
 KAFKA_CONSUMER_ADAPTER=rdkafka
@@ -151,10 +150,9 @@ KAFKA_AUTO_OFFSET_RESET=earliest
 KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 ```
 
-Рабочий Docker-образ должен содержать `php-rdkafka`. Без расширения `rdkafka`-режим
-падает сразу.
+The runtime image must contain `php-rdkafka` before `rdkafka` mode is enabled.
 
-## Метрики и Prometheus
+## Metrics and Prometheus
 
 Endpoint:
 
@@ -162,16 +160,17 @@ Endpoint:
 GET /metrics
 ```
 
-Локальный Prometheus читает:
+Local Prometheus scrapes:
 
 ```text
 http://laravel.test/metrics
 ```
 
-Проверить обязательные series:
+Check required series:
 
 ```bash
 make prometheus-smoke
 ```
 
-Полный список метрик и PromQL smoke queries: [docs/production.md](docs/production.md).
+Full metric list and PromQL smoke queries:
+[docs/en/production.md](docs/en/production.md).

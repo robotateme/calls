@@ -1,6 +1,6 @@
 # Диаграммы
 
-PlantUML-исходники лежат в [docs/diagrams](diagrams/).
+PlantUML-исходники лежат в [diagrams](diagrams/).
 
 - [Регистрация входящего звонка](diagrams/01-incoming-call-registration.puml)
 - [Поиск оператора](diagrams/02-operator-search.puml)
@@ -9,10 +9,10 @@ PlantUML-исходники лежат в [docs/diagrams](diagrams/).
 - [Статусы звонка](diagrams/05-call-state-machine.puml)
 - [Граница агрегата Call](diagrams/06-call-aggregate-boundary.puml)
 
-PNG-превью: [docs/diagrams/README.md](diagrams/README.md).
+PNG-превью: [diagrams/README.md](diagrams/README.md).
 
 Перегенерировать:
 
 ```bash
-plantuml -tpng docs/diagrams/*.puml
+plantuml -tpng docs/ru/diagrams/*.puml
 ```

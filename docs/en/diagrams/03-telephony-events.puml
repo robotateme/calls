@@ -1,0 +1,31 @@
+@startuml
+title 3. Telephony events
+
+actor Telephony
+participant "Kafka consumer" as Consumer
+participant Calls
+database PostgreSQL
+database Outbox
+
+Telephony -> Consumer: fact
+Consumer -> Calls: HandleKafkaCallFactCommand
+Calls -> PostgreSQL: lock call by external_call_id
+
+alt operator_dialing
+    Calls -> PostgreSQL: status=operator_dialing
+else bridge_established
+    Calls -> PostgreSQL: status=connected
+    Calls -> PostgreSQL: release reservation
+else operator_no_answer or operator_leg_dropped before connected
+    Calls -> PostgreSQL: retry or final status
+    Calls -> PostgreSQL: release reservation
+    Calls -> Outbox: retry/exhausted command
+else hangup before connected
+    Calls -> PostgreSQL: final status by policy
+    Calls -> PostgreSQL: release reservation if any
+    Calls -> Outbox: cancel pending assignment if needed
+else late fact after connected/final
+    Calls -> Calls: no-op
+end
+
+@enduml

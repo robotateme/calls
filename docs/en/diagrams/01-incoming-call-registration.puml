@@ -1,0 +1,25 @@
+@startuml
+title 1. Inbound call registration
+
+actor Telephony
+participant "Kafka consumer" as Consumer
+participant Calls
+database PostgreSQL
+queue Redis
+
+Telephony -> Consumer: incoming_call_registered
+Consumer -> Calls: RegisterIncomingCallFromKafkaCommand
+
+alt new external_call_id
+    Calls -> PostgreSQL: INSERT calls(status=new)
+    Calls -> Redis: enqueue ProcessIncomingCallJob
+else duplicate external_call_id
+    Calls -> PostgreSQL: find existing call
+    Calls -> Calls: no duplicate row
+end
+
+note right of PostgreSQL
+  external_call_id is the business key.
+end note
+
+@enduml

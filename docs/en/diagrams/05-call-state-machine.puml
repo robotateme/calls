@@ -1,0 +1,66 @@
+@startuml
+title 5. Call state machine
+
+skinparam state {
+    BackgroundColor #FFFFFF
+    BorderColor #2F3A4A
+    ArrowColor #2F3A4A
+}
+
+top to bottom direction
+hide empty description
+
+state "Before connection" as before_connected {
+    state "new" as new
+    state "waiting" as waiting
+    state "assignment_requested" as assignment_requested
+    state "operator_dialing" as operator_dialing
+
+    [*] --> new : inbound call
+
+    new --> assignment_requested : operator found
+    new --> waiting : no operator,\nattempts remain
+
+    waiting --> assignment_requested : retry,\noperator found
+    waiting --> waiting : no operator,\nattempts remain
+
+    assignment_requested --> operator_dialing : fact operator_dialing
+    assignment_requested --> waiting : operator failed,\nattempts remain
+    operator_dialing --> waiting : operator failed,\nattempts remain
+}
+
+state "connected" as connected
+state "choose final status\nby call policy" as choose_final <<choice>>
+state "missed" as missed
+state "callback_missed" as callback_missed
+state "hangup_on_retry" as hangup_on_retry
+
+operator_dialing --> connected : bridge established
+before_connected --> choose_final : hangup before connection\nor attempts exhausted
+
+connected --> [*] : Calls finished work\nand released reservation
+
+choose_final --> missed : missed
+choose_final --> callback_missed : callback required
+choose_final --> hangup_on_retry : hangup on retry
+
+missed --> [*]
+callback_missed --> [*]
+hangup_on_retry --> [*]
+
+note right of choose_final
+  Final status is chosen by policy:
+  missed, callback_missed, or hangup_on_retry.
+end note
+
+note right of before_connected
+  Before connected Calls may still cancel
+  a pending outbox assignment.
+end note
+
+note right of connected
+  After connected Calls does not model
+  the conversation, hangup, or media drop.
+end note
+
+@enduml
