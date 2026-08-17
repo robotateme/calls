@@ -13,7 +13,7 @@ use Domain\Shared\Timestamp;
 
 final readonly class EloquentOperatorReservationRepository implements OperatorReservationRepository
 {
-    public function __construct(private EloquentOperatorMapper $mapper) {}
+    public function __construct(private EloquentOperatorReservationMapper $mapper) {}
 
     public function reserveAvailableForCall(CallId $callId): ?OperatorReservation
     {
@@ -39,7 +39,7 @@ final readonly class EloquentOperatorReservationRepository implements OperatorRe
             'last_call_at' => $now,
         ])->save();
 
-        return $this->mapper->reservation($operator);
+        return $this->mapper->toReservation($operator);
     }
 
     public function releaseForCall(OperatorId $operatorId, CallId $callId): void

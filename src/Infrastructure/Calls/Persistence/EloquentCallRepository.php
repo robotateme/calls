@@ -29,15 +29,14 @@ final readonly class EloquentCallRepository implements CallReadRepository, CallW
         OperatorSearchRetryDelay $operatorSearchRetryDelay,
         CallHangupPolicy $operatorSearchHangupPolicy,
     ): Call {
-        $record = CallRecord::query()->create([
-            'external_call_id' => $externalCallId->toString(),
-            'phone' => $phone->toString(),
-            'kafka_message_id' => $kafkaMessageId,
-            'status' => CallStatus::New->value,
-            'operator_search_max_attempts' => $operatorSearchMaxAttempts->toInt(),
-            'operator_search_retry_delay_seconds' => $operatorSearchRetryDelay->seconds(),
-            'operator_search_hangup_policy' => $operatorSearchHangupPolicy->value,
-        ]);
+        $record = CallRecord::query()->create($this->mapper->toIncomingInsertData(
+            externalCallId: $externalCallId,
+            phone: $phone,
+            kafkaMessageId: $kafkaMessageId,
+            operatorSearchMaxAttempts: $operatorSearchMaxAttempts,
+            operatorSearchRetryDelay: $operatorSearchRetryDelay,
+            operatorSearchHangupPolicy: $operatorSearchHangupPolicy,
+        ));
 
         return $this->mapper->toDomain($record);
     }
@@ -101,7 +100,10 @@ final readonly class EloquentCallRepository implements CallReadRepository, CallW
     {
         CallRecord::query()
             ->whereKey($call->id())
-            ->update($this->mapper->toDatabase($call));
+            ->update([
+                ...$this->mapper->toUpdateData($call),
+                'updated_at' => now(),
+            ]);
     }
 
     private function forUpdateLock(): string|bool

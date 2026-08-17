@@ -32,17 +32,26 @@ final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutbo
             $ids = $records->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
 
             if ($ids !== []) {
+                $now = now();
+
                 DB::table('telephony_outbox')
                     ->whereIn('id', $ids)
                     ->update([
                         'status' => 'processing',
                         'attempts' => DB::raw('attempts + 1'),
-                        'processing_started_at' => now(),
-                        'updated_at' => now(),
+                        'processing_started_at' => $now,
+                        'updated_at' => $now,
                     ]);
             }
 
-            $messages = $records
+            $claimedRecords = $ids === []
+                ? collect()
+                : DB::table('telephony_outbox')
+                    ->whereIn('id', $ids)
+                    ->orderBy('id')
+                    ->get();
+
+            $messages = $claimedRecords
                 ->map(fn (object $record): TelephonyOutboxMessage => $this->mapper->toDomain((array) $record))
                 ->all();
 
@@ -94,7 +103,7 @@ final readonly class EloquentTelephonyOutboxRepository implements TelephonyOutbo
             }
 
             $messages = $records
-                ->map(fn (object $record): TelephonyOutboxMessage => $this->mapper->toDomain((array) $record, attemptOffset: 0))
+                ->map(fn (object $record): TelephonyOutboxMessage => $this->mapper->toDomain((array) $record))
                 ->all();
 
             return array_values($messages);

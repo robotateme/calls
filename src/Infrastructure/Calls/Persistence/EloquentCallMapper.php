@@ -20,6 +20,7 @@ use Domain\Operators\OperatorId;
 use Domain\Shared\Timestamp;
 use Exception;
 use InvalidArgumentException;
+use UnexpectedValueException;
 use ValueError;
 
 final readonly class EloquentCallMapper
@@ -27,33 +28,34 @@ final readonly class EloquentCallMapper
     /**
      * @throws Exception
      * @throws InvalidArgumentException
+     * @throws UnexpectedValueException
      * @throws ValueError
      */
     public function toDomain(CallRecord $record): Call
     {
         return Call::restore(
-            id: CallId::fromInt((int) $record->id),
-            externalCallId: ExternalCallId::fromString((string) $record->external_call_id),
-            phone: PhoneNumber::fromString((string) $record->phone),
-            status: CallStatus::from((string) $record->status),
-            clientId: $this->clientId($record->getRawOriginal('client_id')),
-            operatorId: $this->operatorId($record->getRawOriginal('operator_id')),
-            operatorSearchAttempts: OperatorSearchAttempts::fromInt((int) $record->getRawOriginal('operator_search_attempts')),
-            operatorSearchMaxAttempts: OperatorSearchMaxAttempts::fromInt((int) $record->getRawOriginal('operator_search_max_attempts')),
-            operatorSearchRetryDelay: OperatorSearchRetryDelay::fromSeconds((int) $record->getRawOriginal('operator_search_retry_delay_seconds')),
-            operatorSearchHangupPolicy: CallHangupPolicy::from((string) $record->operator_search_hangup_policy),
-            nextOperatorSearchAt: $this->timestamp($record->getRawOriginal('next_operator_search_at')),
-            assignmentRequestedAt: $this->timestamp($record->getRawOriginal('assignment_requested_at')),
-            operatorDialingAt: $this->timestamp($record->getRawOriginal('operator_dialing_at')),
-            connectedAt: $this->timestamp($record->getRawOriginal('connected_at')),
-            createdAt: $this->timestamp($record->getRawOriginal('created_at')) ?? Timestamp::now(),
+            id: CallId::fromInt((int) $this->raw($record, 'id')),
+            externalCallId: ExternalCallId::fromString((string) $this->raw($record, 'external_call_id')),
+            phone: PhoneNumber::fromString((string) $this->raw($record, 'phone')),
+            status: CallStatus::from((string) $this->raw($record, 'status')),
+            clientId: $this->clientId($this->raw($record, 'client_id')),
+            operatorId: $this->operatorId($this->raw($record, 'operator_id')),
+            operatorSearchAttempts: OperatorSearchAttempts::fromInt((int) $this->raw($record, 'operator_search_attempts')),
+            operatorSearchMaxAttempts: OperatorSearchMaxAttempts::fromInt((int) $this->raw($record, 'operator_search_max_attempts')),
+            operatorSearchRetryDelay: OperatorSearchRetryDelay::fromSeconds((int) $this->raw($record, 'operator_search_retry_delay_seconds')),
+            operatorSearchHangupPolicy: CallHangupPolicy::from((string) $this->raw($record, 'operator_search_hangup_policy')),
+            nextOperatorSearchAt: $this->timestamp($this->raw($record, 'next_operator_search_at')),
+            assignmentRequestedAt: $this->timestamp($this->raw($record, 'assignment_requested_at')),
+            operatorDialingAt: $this->timestamp($this->raw($record, 'operator_dialing_at')),
+            connectedAt: $this->timestamp($this->raw($record, 'connected_at')),
+            createdAt: $this->requiredTimestamp($this->raw($record, 'created_at')),
         );
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function toDatabase(Call $call): array
+    public function toUpdateData(Call $call): array
     {
         return [
             'client_id' => $call->clientId(),
@@ -64,7 +66,28 @@ final readonly class EloquentCallMapper
             'assignment_requested_at' => $call->assignmentRequestedTimestamp()?->toDatabaseString(),
             'operator_dialing_at' => $call->operatorDialingTimestamp()?->toDatabaseString(),
             'connected_at' => $call->connectedTimestamp()?->toDatabaseString(),
-            'updated_at' => now(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toIncomingInsertData(
+        ExternalCallId $externalCallId,
+        PhoneNumber $phone,
+        string $kafkaMessageId,
+        OperatorSearchMaxAttempts $operatorSearchMaxAttempts,
+        OperatorSearchRetryDelay $operatorSearchRetryDelay,
+        CallHangupPolicy $operatorSearchHangupPolicy,
+    ): array {
+        return [
+            'external_call_id' => $externalCallId->toString(),
+            'phone' => $phone->toString(),
+            'kafka_message_id' => $kafkaMessageId,
+            'status' => CallStatus::New->value,
+            'operator_search_max_attempts' => $operatorSearchMaxAttempts->toInt(),
+            'operator_search_retry_delay_seconds' => $operatorSearchRetryDelay->seconds(),
+            'operator_search_hangup_policy' => $operatorSearchHangupPolicy->value,
         ];
     }
 
@@ -85,6 +108,21 @@ final readonly class EloquentCallMapper
     }
 
     /**
+     * @throws Exception
+     * @throws UnexpectedValueException
+     */
+    private function requiredTimestamp(mixed $value): Timestamp
+    {
+        $timestamp = $this->timestamp($value);
+
+        if ($timestamp === null) {
+            throw new UnexpectedValueException('Persisted Call has no created_at timestamp.');
+        }
+
+        return $timestamp;
+    }
+
+    /**
      * @throws InvalidArgumentException
      */
     private function clientId(mixed $value): ?ClientId
@@ -98,5 +136,11 @@ final readonly class EloquentCallMapper
     private function operatorId(mixed $value): ?OperatorId
     {
         return $value === null ? null : OperatorId::fromInt((int) $value);
+    }
+
+    private function raw(CallRecord $record, string $column): mixed
+    {
+        // Mapper restores persisted primitives instead of depending on Eloquent casts.
+        return $record->getRawOriginal($column);
     }
 }
