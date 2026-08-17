@@ -37,6 +37,10 @@ FOR UPDATE SKIP LOCKED
 получает уже обновлённые строки для публикации. Для SQLite-тестов и
 не-PostgreSQL драйверов остаётся portable fallback.
 
+Production-ветка проверяется отдельным integration test на PostgreSQL:
+`tests/Feature/PostgreSQLTelephonyOutboxRepositoryTest.php`. Он проверяет
+post-claim `attempts` и конкурентный claim двумя workers для одной записи.
+
 В SQLite-тестах остаётся обычный Laravel lock.
 
 Что это значит на практике: worker берёт только свободные строки. Если соседний

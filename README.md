@@ -99,6 +99,15 @@ cp .env.example .env
 ./vendor/bin/sail composer phpstan
 ```
 
+PostgreSQL integration tests запускаются обычным `php artisan test`, если
+доступна БД из `PG_INTEGRATION_*`. В CI PostgreSQL поднимается отдельным service.
+Локально можно поднять `pgsql` через Sail и указать тестовую БД:
+
+```bash
+./vendor/bin/sail up -d pgsql
+PG_INTEGRATION_HOST=127.0.0.1 PG_INTEGRATION_DATABASE=testing php artisan test
+```
+
 ## Make
 
 Частые команды:
