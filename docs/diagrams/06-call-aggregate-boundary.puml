@@ -1,0 +1,44 @@
+@startuml
+title 6. Граница агрегата Call
+
+skinparam package {
+    BackgroundColor #FFFFFF
+    BorderColor #2F3A4A
+}
+
+skinparam rectangle {
+    BackgroundColor #FFFFFF
+    BorderColor #2F3A4A
+}
+
+skinparam ArrowColor #2F3A4A
+
+left to right direction
+
+package "Call aggregate boundary" as boundary {
+    rectangle "Call\nAggregate Root / Entity" as call
+    rectangle "CallId" as call_id
+    rectangle "ClientId?" as client_id
+    rectangle "OperatorId?" as operator_id
+    rectangle "CallStatus\noperator search params\ntimestamps\nstate rules" as state
+
+    call --> call_id
+    call --> client_id
+    call --> operator_id
+    call --> state
+}
+
+rectangle "Client\noutside aggregate" as client
+rectangle "Operator\noutside aggregate" as operator
+rectangle "Operator reservation\noperators.reserved_call_id\noperators.reserved_at" as reservation
+
+client_id ..> client
+operator_id ..> operator
+operator ..> reservation
+
+note bottom of boundary
+  Call хранит идентификаторы внешних объектов,
+  но не владеет жизненным циклом Client/Operator.
+end note
+
+@enduml

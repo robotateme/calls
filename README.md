@@ -33,13 +33,16 @@ Laravel-сервис, который обрабатывает входящий �
 1. [Решение](docs/solution.md) - весь путь звонка простым текстом.
 2. [Kafka](docs/kafka-contracts.md) - какие сообщения приходят и уходят.
 3. [Архитектура](docs/architecture.md) - где лежит код и что нельзя смешивать.
-4. [ADR](docs/adr/README.md) - почему выбраны Kafka, слои, бронь, locks и
+4. [Domain Model](docs/domain-model.md) - что такое `Call` aggregate root и как
+   mapper-ы восстанавливают доменную модель из БД.
+5. [ADR](docs/adr/README.md) - почему выбраны Kafka, слои, бронь, locks и
    snapshot метрик.
-5. [Production](docs/production.md) - какие процессы должны работать постоянно.
+6. [Production](docs/production.md) - какие процессы должны работать постоянно.
 
 ## Документы
 
 - [Архитектура](docs/architecture.md)
+- [Domain Model и Infrastructure Mapping](docs/domain-model.md)
 - [Решение](docs/solution.md)
 - [Kafka](docs/kafka-contracts.md)
 - [ADR](docs/adr/README.md)

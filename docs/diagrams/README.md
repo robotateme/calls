@@ -19,3 +19,5 @@ plantuml -tpng docs/diagrams/*.puml
 ![Публикация outbox](./04-telephony-outbox-publisher.png)
 
 ![Статусы звонка](./05-call-state-machine.png)
+
+![Граница агрегата Call](./06-call-aggregate-boundary.png)

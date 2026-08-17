@@ -53,9 +53,14 @@ Eloquent и строки БД - только формат хранения. В �
 Причина: обработчик в `Application` должен работать с понятным звонком,
 оператором или id, а не знать, как именно Laravel хранит строку в таблице.
 
+Подробно про `Call` как Aggregate Root, границу агрегата и ответственность
+Repository/Mapper/Domain: [domain-model.md](domain-model.md).
+
 ## Где искать правила
 
 - Путь звонка, статусы, retry, outbox и DLQ: [solution.md](solution.md).
+- Aggregate Root `Call` и mapping из persistence в Domain:
+  [domain-model.md](domain-model.md).
 - Kafka topics, payload и key: [kafka-contracts.md](kafka-contracts.md).
 - Почему выбраны слои, Kafka, locks, бронь и snapshot метрик:
   [adr/README.md](adr/README.md).
