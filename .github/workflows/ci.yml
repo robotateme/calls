@@ -18,6 +18,20 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: calls_testing
+          POSTGRES_USER: sail
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -q -d calls_testing -U sail"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       APP_ENV: testing
       APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -35,6 +49,11 @@ jobs:
       PULSE_ENABLED: 'false'
       TELESCOPE_ENABLED: 'false'
       NIGHTWATCH_ENABLED: 'false'
+      PG_INTEGRATION_HOST: 127.0.0.1
+      PG_INTEGRATION_PORT: 5432
+      PG_INTEGRATION_DATABASE: calls_testing
+      PG_INTEGRATION_USERNAME: sail
+      PG_INTEGRATION_PASSWORD: password
 
     steps:
       - name: Checkout
