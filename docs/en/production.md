@@ -185,6 +185,17 @@ metrics. Calls metric values are still produced by handlers and
 `calls:metrics:snapshot`, scraped by Prometheus from `/metrics`, and then read by
 Grafana from Prometheus.
 
+The local Grafana dashboard also includes external Prometheus series for:
+
+- Kafka consumer group lag from `kafka-exporter`;
+- Redis queue depth from the Calls snapshot metric `queue_depth`;
+- Redis memory from `redis-exporter`;
+- container CPU and memory from cAdvisor.
+
+Production must provide equivalent Kafka, Redis, and container metrics through
+the environment monitoring stack. The local Compose exporters are a development
+baseline, not a production deployment requirement.
+
 Detailed local observability setup: [observability.md](observability.md).
 
 If `up{job="calls"}` is 0, Prometheus cannot scrape `/metrics`. If gauges do not
@@ -223,9 +234,9 @@ Current rules cover:
 - old pending outbox records;
 - calls waiting too long for an operator.
 
-Current rules do not cover Redis queue depth, Kafka consumer heartbeat, or
-container CPU/memory. Add Redis/Kafka/container exporters or application metrics
-before paging on those signals.
+Current rules do not cover Kafka consumer heartbeat, Kafka broker produce/fetch
+latency, or Redis/container resource thresholds. Add exporter-backed rules or
+managed monitoring alerts before paging on those signals.
 
 The local AlertManager receiver is intentionally a no-op. Production must route
 alerts to the real incident channel for the environment.

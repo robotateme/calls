@@ -28,6 +28,9 @@ Docker Compose services:
 - `prometheus` - `http://localhost:9090`
 - `alertmanager` - `http://localhost:9093`
 - `grafana` - `http://localhost:3000`
+- `kafka-exporter` - Kafka consumer group lag metrics for Prometheus
+- `redis-exporter` - Redis runtime metrics for Prometheus
+- `cadvisor` - container CPU and memory metrics for Prometheus
 
 Grafana local login:
 
@@ -88,7 +91,16 @@ Calls Overview
 ```
 
 The dashboard uses the existing Calls metrics documented in
-[production.md](production.md).
+[production.md](production.md) and local exporter metrics:
+
+- Kafka consumer lag: `kafka_consumergroup_lag`;
+- Redis queue depth from Calls snapshot: `queue_depth`;
+- Redis memory: `redis_memory_used_bytes`;
+- container CPU: `container_cpu_usage_seconds_total`;
+- container memory: `container_memory_working_set_bytes`.
+
+Production can use different exporters or managed monitoring, but it must expose
+equivalent Prometheus series before relying on these dashboard panels.
 
 ## Alert Rules
 
@@ -115,13 +127,10 @@ Current rules:
 Thresholds in local rules are starting values, not production SLOs. Tune them
 per environment before using them for paging.
 
-Not covered by current Calls metrics yet:
-
-- Redis queue depth;
-- Kafka consumer heartbeat;
-- container CPU and memory.
-
-Those need Redis/Kafka/container exporters or new application metrics.
+The local stack covers Kafka lag, Redis queue depth, Redis memory, and container
+CPU/memory in Grafana. It still does not cover Kafka consumer heartbeat or
+Kafka broker produce/fetch latency as explicit service SLOs. Add Kafka broker
+metrics or managed Kafka monitoring before paging on those signals.
 
 ## Local Commands
 
@@ -208,6 +217,10 @@ If gauges do not change, check:
 - `calls:metrics:snapshot` succeeds;
 - Prometheus scrape target is healthy.
 
+If external panels are empty, check Prometheus scrape targets for `kafka`,
+`redis`, and `containers`. Those panels depend on local exporters, not on the
+Calls `/metrics` endpoint.
+
 If counters do not grow during test events, check handlers, Redis queue workers,
 and Kafka consumers.
 
@@ -217,6 +230,16 @@ Kafka/DLQ failure counters:
 sum by (source, topic, reason) (rate(kafka_consumer_dlq_total[5m]))
 sum by (source, topic, reason) (rate(kafka_consumer_failures_total[5m]))
 sum by (source, topic, reason, result) (rate(dead_letter_records_total[5m]))
+```
+
+External dashboard queries:
+
+```promql
+sum by (consumergroup, topic) (kafka_consumergroup_lag)
+sum by (queue) (queue_depth)
+redis_memory_used_bytes
+sum by (name) (rate(container_cpu_usage_seconds_total{image!=""}[5m]))
+sum by (name) (container_memory_working_set_bytes{image!=""})
 ```
 
 If Grafana cannot query Prometheus, check that the datasource URL inside Docker

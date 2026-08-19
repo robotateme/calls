@@ -28,6 +28,9 @@ Docker Compose services:
 - `prometheus` - `http://localhost:9090`
 - `alertmanager` - `http://localhost:9093`
 - `grafana` - `http://localhost:3000`
+- `kafka-exporter` - метрики Kafka consumer group lag для Prometheus
+- `redis-exporter` - Redis runtime metrics для Prometheus
+- `cadvisor` - container CPU и memory metrics для Prometheus
 
 Локальный логин Grafana:
 
@@ -87,7 +90,18 @@ Dashboard:
 Calls Overview
 ```
 
-Dashboard использует существующие метрики Calls из [production.md](production.md).
+Dashboard использует существующие метрики Calls из [production.md](production.md)
+и локальные exporter metrics:
+
+- Kafka consumer lag: `kafka_consumergroup_lag`;
+- Redis queue depth из Calls snapshot: `queue_depth`;
+- Redis memory: `redis_memory_used_bytes`;
+- container CPU: `container_cpu_usage_seconds_total`;
+- container memory: `container_memory_working_set_bytes`.
+
+В production можно использовать другие exporters или managed monitoring, но
+нужно отдать эквивалентные Prometheus series до того, как полагаться на эти
+панели dashboard.
 
 ## Alert rules
 
@@ -115,13 +129,10 @@ Dashboard использует существующие метрики Calls и�
 Локальные thresholds - стартовые значения, а не production SLO. Перед paging в
 production их надо настроить под окружение.
 
-Текущие метрики Calls пока не покрывают:
-
-- Redis queue depth;
-- Kafka consumer heartbeat;
-- CPU и memory контейнеров.
-
-Для этого нужны Redis/Kafka/container exporters или новые application metrics.
+Локальный стек покрывает Kafka lag, Redis queue depth, Redis memory и container
+CPU/memory в Grafana. Он всё ещё не покрывает Kafka consumer heartbeat и Kafka
+broker produce/fetch latency как явные service SLO. Для paging по этим сигналам
+нужны Kafka broker metrics или managed Kafka monitoring.
 
 ## Локальные команды
 
@@ -208,6 +219,10 @@ docker compose logs grafana
 - успешно ли проходит `calls:metrics:snapshot`;
 - healthy ли scrape target в Prometheus.
 
+Если внешние панели пустые, проверьте Prometheus scrape targets `kafka`,
+`redis` и `containers`. Эти панели зависят от локальных exporters, а не от
+Calls `/metrics`.
+
 Если counters не растут на тестовых событиях, проверьте handlers, Redis queue
 workers и Kafka consumers.
 
@@ -217,6 +232,16 @@ Kafka/DLQ failure counters:
 sum by (source, topic, reason) (rate(kafka_consumer_dlq_total[5m]))
 sum by (source, topic, reason) (rate(kafka_consumer_failures_total[5m]))
 sum by (source, topic, reason, result) (rate(dead_letter_records_total[5m]))
+```
+
+External dashboard queries:
+
+```promql
+sum by (consumergroup, topic) (kafka_consumergroup_lag)
+sum by (queue) (queue_depth)
+redis_memory_used_bytes
+sum by (name) (rate(container_cpu_usage_seconds_total{image!=""}[5m]))
+sum by (name) (container_memory_working_set_bytes{image!=""})
 ```
 
 Если Grafana не может читать Prometheus, проверьте, что datasource URL внутри

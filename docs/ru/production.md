@@ -185,6 +185,17 @@ service-метриками. Значения метрик Calls по-прежн�
 `calls:metrics:snapshot`, Prometheus читает их из `/metrics`, а Grafana читает
 их из Prometheus.
 
+Локальный Grafana dashboard также включает внешние Prometheus series:
+
+- Kafka consumer group lag из `kafka-exporter`;
+- Redis queue depth из Calls snapshot metric `queue_depth`;
+- Redis memory из `redis-exporter`;
+- container CPU и memory из cAdvisor.
+
+Production должен отдавать эквивалентные Kafka, Redis и container metrics через
+monitoring stack окружения. Локальные Compose exporters - development baseline,
+а не требование к production deployment.
+
 Подробная настройка локального observability:
 [observability.md](observability.md).
 
@@ -224,9 +235,9 @@ docker/prometheus/rules/calls-alerts.yml
 - старые pending outbox records;
 - звонки, которые слишком долго ждут оператора.
 
-Текущие rules не покрывают Redis queue depth, Kafka consumer heartbeat и CPU /
-memory контейнеров. Для этих сигналов нужны Redis/Kafka/container exporters или
-новые application metrics.
+Текущие rules не покрывают Kafka consumer heartbeat, Kafka broker produce/fetch
+latency и Redis/container resource thresholds. Для этих сигналов нужны
+exporter-backed rules или managed monitoring alerts.
 
 Локальный receiver AlertManager намеренно no-op. В production alerts надо
 направить в реальный incident channel окружения.

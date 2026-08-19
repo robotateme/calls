@@ -103,6 +103,41 @@ services:
             kafka:
                 condition: service_healthy
 
+    kafka-exporter:
+        image: 'danielqsj/kafka-exporter:latest'
+        command:
+            - '--kafka.server=kafka:9092'
+            - '--web.listen-address=:9308'
+        networks:
+            - sail
+        depends_on:
+            kafka:
+                condition: service_healthy
+
+    redis-exporter:
+        image: 'oliver006/redis_exporter:latest'
+        environment:
+            REDIS_ADDR: 'redis://redis:6379'
+        networks:
+            - sail
+        depends_on:
+            redis:
+                condition: service_healthy
+
+    cadvisor:
+        image: 'gcr.io/cadvisor/cadvisor:latest'
+        privileged: true
+        devices:
+            - '/dev/kmsg:/dev/kmsg'
+        volumes:
+            - '/:/rootfs:ro'
+            - '/var/run:/var/run:ro'
+            - '/sys:/sys:ro'
+            - '/var/lib/docker:/var/lib/docker:ro'
+            - '/dev/disk:/dev/disk:ro'
+        networks:
+            - sail
+
     prometheus:
         image: 'prom/prometheus:v3.13.2'
         ports:
@@ -119,6 +154,12 @@ services:
             - sail
         depends_on:
             laravel.test:
+                condition: service_started
+            kafka-exporter:
+                condition: service_started
+            redis-exporter:
+                condition: service_started
+            cadvisor:
                 condition: service_started
 
     alertmanager:

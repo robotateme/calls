@@ -17,3 +17,18 @@ scrape_configs:
     static_configs:
       - targets:
           - laravel.test:80
+
+  - job_name: kafka
+    static_configs:
+      - targets:
+          - kafka-exporter:9308
+
+  - job_name: redis
+    static_configs:
+      - targets:
+          - redis-exporter:9121
+
+  - job_name: containers
+    static_configs:
+      - targets:
+          - cadvisor:8080
