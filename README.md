@@ -178,6 +178,9 @@ Local Prometheus scrapes:
 http://laravel.test/metrics
 ```
 
+The local Prometheus config uses Basic Auth credentials from `.env.example`.
+Production must replace them and restrict `/metrics` at the network layer.
+
 Local Grafana opens at:
 
 ```text

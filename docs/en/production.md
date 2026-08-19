@@ -136,16 +136,18 @@ GET /metrics
 ```
 
 Production must not expose `/metrics` to the public internet. Restrict it at the
-network level to Prometheus IPs or a private monitoring network. Optional Basic
-Auth can be enabled as a second layer:
+network level to Prometheus IPs or a private monitoring network. Basic Auth and
+an optional app-level IP allowlist are available as a second layer:
 
 ```env
 METRICS_BASIC_AUTH_USER=prometheus
 METRICS_BASIC_AUTH_PASSWORD=change-me
+METRICS_ALLOWED_IPS=10.0.0.0/8,192.168.10.20
 ```
 
 If one of these values is set, both must be set and Prometheus must scrape with
-matching credentials.
+matching credentials. `METRICS_ALLOWED_IPS` accepts comma-separated exact IPs or
+CIDR ranges. Do not use the local example credentials in production.
 
 `/metrics` only renders prepared values. It does not run `COUNT`, `MIN`, or
 grouping over PostgreSQL. Those queries are done by:

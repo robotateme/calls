@@ -79,6 +79,25 @@ final class MetricsEndpointTest extends TestCase
         $this->get('/metrics')->assertUnauthorized();
     }
 
+    public function test_it_restricts_metrics_by_allowed_ip_when_configured(): void
+    {
+        config()->set('calls.metrics_basic_auth_user', 'prometheus');
+        config()->set('calls.metrics_basic_auth_password', 'secret');
+        config()->set('calls.metrics_allowed_ips', '10.10.0.0/16,127.0.0.1');
+
+        $authorization = 'Basic '.base64_encode('prometheus:secret');
+
+        $this->withServerVariables(['REMOTE_ADDR' => '192.168.1.10'])
+            ->withHeaders(['Authorization' => $authorization])
+            ->get('/metrics')
+            ->assertUnauthorized();
+
+        $this->withServerVariables(['REMOTE_ADDR' => '10.10.5.20'])
+            ->withHeaders(['Authorization' => $authorization])
+            ->get('/metrics')
+            ->assertOk();
+    }
+
     public function test_it_drops_stale_gauge_series_before_new_snapshot_values_are_written(): void
     {
         $metrics = $this->app->make(Metrics::class);

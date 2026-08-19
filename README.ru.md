@@ -182,6 +182,9 @@ GET /metrics
 http://laravel.test/metrics
 ```
 
+Локальный Prometheus использует Basic Auth credentials из `.env.example`.
+Production должен заменить их и закрыть `/metrics` на сетевом уровне.
+
 Локальная Grafana открывается здесь:
 
 ```text

@@ -47,15 +47,20 @@ Production must restrict `/metrics` at the network level so only Prometheus can
 reach it, for example through a private service, security group, ingress
 allowlist, or Kubernetes `ClusterIP`.
 
-Calls also supports optional Basic Auth as a second layer:
+Calls also supports Basic Auth and an optional app-level IP allowlist as a
+second layer:
 
 ```env
 METRICS_BASIC_AUTH_USER=prometheus
 METRICS_BASIC_AUTH_PASSWORD=change-me
+METRICS_ALLOWED_IPS=10.0.0.0/8,192.168.10.20
 ```
 
 If either variable is configured, both must be present and match the Prometheus
-scrape request. Local development can leave both values empty.
+scrape request. `METRICS_ALLOWED_IPS` accepts comma-separated exact IPs or CIDR
+ranges. The local `.env.example` enables Basic Auth with development credentials
+and the local Prometheus config scrapes with the same credentials. Production
+must replace those values.
 
 ## Data Flow
 

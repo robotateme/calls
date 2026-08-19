@@ -14,6 +14,9 @@ rule_files:
 scrape_configs:
   - job_name: calls
     metrics_path: /metrics
+    basic_auth:
+      username: prometheus
+      password: prometheus
     static_configs:
       - targets:
           - laravel.test:80

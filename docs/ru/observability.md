@@ -47,16 +47,20 @@ admin / admin
 Prometheus через private service, security group, ingress allowlist или
 Kubernetes `ClusterIP`.
 
-Calls также поддерживает optional Basic Auth как второй слой:
+Calls также поддерживает Basic Auth и optional app-level IP allowlist как второй
+слой:
 
 ```env
 METRICS_BASIC_AUTH_USER=prometheus
 METRICS_BASIC_AUTH_PASSWORD=change-me
+METRICS_ALLOWED_IPS=10.0.0.0/8,192.168.10.20
 ```
 
 Если задана одна из переменных, должны быть заданы обе, и Prometheus должен
-читать `/metrics` с matching credentials. Локально обе переменные можно оставить
-пустыми.
+читать `/metrics` с matching credentials. `METRICS_ALLOWED_IPS` принимает
+comma-separated exact IPs или CIDR ranges. Локальный `.env.example` включает
+Basic Auth с development credentials, а локальный Prometheus scrape-ит с теми же
+credentials. В production эти значения надо заменить.
 
 ## Поток данных
 
