@@ -378,14 +378,24 @@ Facts:
 1. Посмотреть `reason`.
 2. Найти producer-а или handler, который создал проблему.
 3. Исправить формат или код.
-4. Пометить запись resolved.
+4. Запустить `calls:dead-letter:replay --dry-run`, если запись надо применить.
+5. Сделать ручной replay или пометить запись resolved.
 
 Не надо молча переигрывать всё из DLQ. Сначала нужно понять, почему сообщение
 туда попало.
+
+Команда ручного replay:
+
+```bash
+php artisan calls:dead-letter:replay --dry-run --id=123
+php artisan calls:dead-letter:replay --id=123 --note="fixed handler"
+```
+
+Попытки replay хранятся в `dead_letter_replay_attempts`. Успешный replay ставит
+`resolved_at`; неуспешный replay оставляет запись unresolved.
 
 ## Не сделано
 
 - inbox для facts;
 - schema registry;
-- автоматическая повторная обработка из DLQ;
 - отдельные Kafka DLQ topics.

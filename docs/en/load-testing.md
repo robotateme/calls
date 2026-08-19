@@ -135,3 +135,21 @@ How to read the result:
   commands fast enough;
 - growing `dead_letter_current` - bad messages arrive or handler fails;
 - growing `oldest_waiting_call_age_seconds` - calls wait too long for operator.
+
+## Staging Go-Live Validation
+
+Before production traffic, staging must pass checks that use real Kafka, not
+only JSONL:
+
+- successful incoming call path until `connected`;
+- duplicate `external_call_id` handling;
+- unavailable operator retry/final outcome;
+- timeout or no-answer fact handling;
+- alert firing for Kafka lag, DLQ growth, queue depth, and target down;
+- graceful shutdown while Kafka consumer or outbox publisher is processing;
+- `calls:dead-letter:replay --dry-run` and one replay with test data;
+- external `/metrics` access denied from outside the monitoring network.
+
+Keep the report with deployment notes. Production go-live should not depend on
+local Compose exporters; staging must use the same monitoring path as the target
+environment or an equivalent managed stack.

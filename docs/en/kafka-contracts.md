@@ -379,14 +379,24 @@ What to do with DLQ:
 1. Inspect `reason`.
 2. Find the producer or handler that caused it.
 3. Fix the format or code.
-4. Mark the record resolved.
+4. Run `calls:dead-letter:replay --dry-run` if the record should be applied.
+5. Replay manually or mark the record resolved.
 
 Do not silently replay everything from DLQ. First understand why the message was
 there.
+
+Manual replay command:
+
+```bash
+php artisan calls:dead-letter:replay --dry-run --id=123
+php artisan calls:dead-letter:replay --id=123 --note="fixed handler"
+```
+
+Replay attempts are stored in `dead_letter_replay_attempts`. Successful replay
+sets `resolved_at`; failed replay keeps the record unresolved.
 
 ## Not Implemented
 
 - fact inbox;
 - schema registry;
-- automatic reprocessing from DLQ;
 - dedicated Kafka DLQ topics.

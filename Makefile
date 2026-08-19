@@ -3,11 +3,11 @@ ARTISAN := php artisan
 COMPOSER := composer
 TEST_ENV := APP_ENV=testing APP_MAINTENANCE_DRIVER=file BCRYPT_ROUNDS=4 LOG_CHANNEL=null BROADCAST_CONNECTION=null CACHE_STORE=array DB_CONNECTION=sqlite DB_DATABASE=:memory: DB_URL= MAIL_MAILER=array QUEUE_CONNECTION=sync SESSION_DRIVER=array PULSE_ENABLED=false TELESCOPE_ENABLED=false NIGHTWATCH_ENABLED=false
 QUERY ?= up
-PROMETHEUS_REQUIRED_QUERY := {__name__=~"calls_received_total|calls_deduplicated_total|call_transitions_total|operator_reservation_attempts_total|telephony_outbox_publish_total|dead_letter_messages_total|dead_letter_records_total|kafka_consumer_dlq_total|kafka_consumer_failures_total|calls_current|operators_reserved_current|telephony_outbox_current|dead_letter_current|oldest_waiting_call_age_seconds|oldest_outbox_message_age_seconds"}
+PROMETHEUS_REQUIRED_QUERY := {__name__=~"calls_received_total|calls_deduplicated_total|call_transitions_total|operator_reservation_attempts_total|telephony_outbox_publish_total|dead_letter_messages_total|dead_letter_records_total|kafka_consumer_dlq_total|kafka_consumer_failures_total|calls_current|operators_reserved_current|telephony_outbox_current|dead_letter_current|oldest_waiting_call_age_seconds|oldest_outbox_message_age_seconds|queue_depth"}
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-prune kafka-topics kafka-ui prometheus prometheus-ready prometheus-targets prometheus-query prometheus-rules prometheus-alerts prometheus-smoke alertmanager alertmanager-ready alertmanager-alerts grafana grafana-ready
+.PHONY: help up down restart status logs shell composer artisan migrate fresh test phpstan pint validate validate-local queue queue-retry schedule outbox-publish outbox-requeue-stale release-expired-reservations metrics-snapshot kafka-consume load-jsonl load-smoke load-stress-large load-soak-large production-build dead-letter-list dead-letter-replay-dry dead-letter-replay dead-letter-prune kafka-topics kafka-ui prometheus prometheus-ready prometheus-targets prometheus-query prometheus-rules prometheus-alerts prometheus-smoke alertmanager alertmanager-ready alertmanager-alerts grafana grafana-ready
 
 help:
 	@printf "%s\n" "Available targets:"
@@ -39,6 +39,8 @@ help:
 	@printf "  %-18s %s\n" "load-soak-large" "Run large soak JSONL profile in Sail"
 	@printf "  %-18s %s\n" "production-build" "Build production image locally"
 	@printf "  %-18s %s\n" "dead-letter-list" "List unresolved DLQ records in Sail"
+	@printf "  %-18s %s\n" "dead-letter-replay-dry" "Preview DLQ replay in Sail, pass ID=123"
+	@printf "  %-18s %s\n" "dead-letter-replay" "Replay one DLQ record in Sail, pass ID=123 NOTE='fixed handler'"
 	@printf "  %-18s %s\n" "dead-letter-prune" "Prune resolved DLQ records in Sail"
 	@printf "  %-18s %s\n" "kafka-topics" "List Kafka topics"
 	@printf "  %-18s %s\n" "kafka-ui" "Print Kafka UI URL"
@@ -146,6 +148,12 @@ production-build:
 dead-letter-list:
 	$(SAIL) artisan calls:dead-letter:list
 
+dead-letter-replay-dry:
+	$(SAIL) artisan calls:dead-letter:replay --dry-run --id="$(ID)"
+
+dead-letter-replay:
+	$(SAIL) artisan calls:dead-letter:replay --id="$(ID)" --note="$(NOTE)"
+
 dead-letter-prune:
 	$(SAIL) artisan calls:dead-letter:prune-resolved
 
@@ -175,7 +183,7 @@ prometheus-alerts:
 
 prometheus-smoke:
 	$(SAIL) artisan calls:metrics:snapshot
-	$(SAIL) artisan tinker --execute='use Application\Shared\Ports\Metrics; $$metrics = app(Metrics::class); $$metrics->increment("calls_received_total", 0); $$metrics->increment("calls_deduplicated_total", 0); $$metrics->increment("call_transitions_total", 0, ["from" => "new", "to" => "assignment_requested"]); $$metrics->increment("operator_reservation_attempts_total", 0, ["result" => "success"]); $$metrics->increment("telephony_outbox_publish_total", 0, ["result" => "published"]); $$metrics->increment("dead_letter_messages_total", 0, ["reason" => "invalid_payload"]); $$metrics->increment("dead_letter_records_total", 0, ["source" => "incoming-calls-consumer", "topic" => "incoming-calls", "reason" => "invalid_payload", "result" => "inserted"]); $$metrics->increment("kafka_consumer_dlq_total", 0, ["source" => "incoming-calls-consumer", "topic" => "incoming-calls", "reason" => "invalid_payload"]); $$metrics->increment("kafka_consumer_failures_total", 0, ["source" => "incoming-calls-consumer", "topic" => "incoming-calls", "reason" => "consumer_failed"]);'
+	$(SAIL) artisan tinker --execute='use Application\Shared\Ports\Metrics; $$metrics = app(Metrics::class); $$metrics->increment("calls_received_total", 0); $$metrics->increment("calls_deduplicated_total", 0); $$metrics->increment("call_transitions_total", 0, ["from" => "new", "to" => "assignment_requested"]); $$metrics->increment("operator_reservation_attempts_total", 0, ["result" => "success"]); $$metrics->increment("telephony_outbox_publish_total", 0, ["result" => "published"]); $$metrics->increment("dead_letter_messages_total", 0, ["reason" => "invalid_payload"]); $$metrics->increment("dead_letter_records_total", 0, ["source" => "incoming-calls-consumer", "topic" => "incoming-calls", "reason" => "invalid_payload", "result" => "inserted"]); $$metrics->increment("kafka_consumer_dlq_total", 0, ["source" => "incoming-calls-consumer", "topic" => "incoming-calls", "reason" => "invalid_payload"]); $$metrics->increment("kafka_consumer_failures_total", 0, ["source" => "incoming-calls-consumer", "topic" => "incoming-calls", "reason" => "consumer_failed"]); $$metrics->gauge("queue_depth", 0, ["queue" => "calls"]); $$metrics->gauge("queue_depth", 0, ["queue" => "calls-retry"]);'
 	sleep 16
 	$(MAKE) prometheus-query QUERY='$(PROMETHEUS_REQUIRED_QUERY)'
 

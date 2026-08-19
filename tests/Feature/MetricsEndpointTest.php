@@ -53,6 +53,32 @@ final class MetricsEndpointTest extends TestCase
         $this->assertStringContainsString('call_processing_duration_ms_count{result="retry_scheduled"} 1', $content);
     }
 
+    public function test_it_requires_basic_auth_when_metrics_credentials_are_configured(): void
+    {
+        config()->set('calls.metrics_basic_auth_user', 'prometheus');
+        config()->set('calls.metrics_basic_auth_password', 'secret');
+
+        $this->get('/metrics')
+            ->assertUnauthorized()
+            ->assertHeader('WWW-Authenticate', 'Basic realm="Calls metrics"');
+
+        $this->withHeaders([
+            'Authorization' => 'Basic '.base64_encode('prometheus:wrong'),
+        ])->get('/metrics')->assertUnauthorized();
+
+        $this->withHeaders([
+            'Authorization' => 'Basic '.base64_encode('prometheus:secret'),
+        ])->get('/metrics')->assertOk();
+    }
+
+    public function test_it_rejects_metrics_when_basic_auth_is_partially_configured(): void
+    {
+        config()->set('calls.metrics_basic_auth_user', 'prometheus');
+        config()->set('calls.metrics_basic_auth_password', null);
+
+        $this->get('/metrics')->assertUnauthorized();
+    }
+
     public function test_it_drops_stale_gauge_series_before_new_snapshot_values_are_written(): void
     {
         $metrics = $this->app->make(Metrics::class);

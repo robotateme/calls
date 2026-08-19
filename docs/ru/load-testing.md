@@ -136,3 +136,21 @@ topic.
   отправлять команды;
 - растёт `dead_letter_current` - приходят плохие сообщения или handler падает;
 - растёт `oldest_waiting_call_age_seconds` - звонки слишком долго ждут оператора.
+
+## Staging validation перед go-live
+
+Перед production traffic staging должен пройти проверки через real Kafka, не
+только JSONL:
+
+- успешный путь входящего звонка до `connected`;
+- обработка дубля `external_call_id`;
+- retry/final outcome при недоступном операторе;
+- обработка timeout или no-answer fact;
+- firing alerts для Kafka lag, DLQ growth, queue depth и target down;
+- graceful shutdown во время обработки Kafka consumer или outbox publisher;
+- `calls:dead-letter:replay --dry-run` и один replay на тестовых данных;
+- внешний доступ к `/metrics` запрещён вне monitoring network.
+
+Сохраняйте отчёт рядом с deployment notes. Production go-live не должен
+зависеть от локальных Compose exporters; staging должен использовать тот же
+monitoring path, что целевое окружение, или эквивалентный managed stack.

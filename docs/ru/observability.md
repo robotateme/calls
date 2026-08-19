@@ -41,6 +41,23 @@ admin / admin
 Это credentials только для локальной разработки. При необходимости переопределяй
 их через `GRAFANA_ADMIN_USER` и `GRAFANA_ADMIN_PASSWORD`.
 
+## Доступ к метрикам
+
+В production `/metrics` должен быть закрыт на сетевом уровне: доступ только для
+Prometheus через private service, security group, ingress allowlist или
+Kubernetes `ClusterIP`.
+
+Calls также поддерживает optional Basic Auth как второй слой:
+
+```env
+METRICS_BASIC_AUTH_USER=prometheus
+METRICS_BASIC_AUTH_PASSWORD=change-me
+```
+
+Если задана одна из переменных, должны быть заданы обе, и Prometheus должен
+читать `/metrics` с matching credentials. Локально обе переменные можно оставить
+пустыми.
+
 ## Поток данных
 
 ```text
@@ -120,6 +137,13 @@ Dashboard использует существующие метрики Calls и�
   source, topic и reason.
 - `CallsKafkaConsumerFailures`: Kafka consumer boundary упал по source, topic и
   reason.
+- `CallsKafkaConsumerLagHigh`: Kafka consumer group lag выше локального порога.
+- `CallsQueueDepthHigh`: Redis queue depth для `calls` или `calls-retry` выше
+  локального порога.
+- `CallsProcessingErrorRateHigh`: Kafka DLQ и consumer failure rate выше
+  локального процентного порога.
+- `CallsExternalMetricsTargetDown`: Prometheus не может прочитать один из
+  локальных exporter targets, которые использует Grafana.
 - `CallsOutboxFailedRecordsPresent`: есть failed outbox records.
 - `CallsOutboxPendingHigh`: pending outbox backlog выше локального порога.
 - `CallsOutboxOldestPendingTooOld`: самый старый pending outbox record старше
@@ -130,9 +154,14 @@ Dashboard использует существующие метрики Calls и�
 production их надо настроить под окружение.
 
 Локальный стек покрывает Kafka lag, Redis queue depth, Redis memory и container
-CPU/memory в Grafana. Он всё ещё не покрывает Kafka consumer heartbeat и Kafka
-broker produce/fetch latency как явные service SLO. Для paging по этим сигналам
-нужны Kafka broker metrics или managed Kafka monitoring.
+CPU/memory в Grafana. Он всё ещё не пишет явные heartbeat metrics от Kafka
+consumers и outbox publisher и не покрывает Kafka broker produce/fetch latency
+как явные service SLO. Для paging по этим сигналам нужны application heartbeat
+metrics, Kafka broker metrics или managed Kafka monitoring.
+
+Локальный receiver AlertManager намеренно no-op. В production надо
+смонтировать конфигурацию AlertManager под окружение с реальным incident
+receiver: PagerDuty, Opsgenie или dedicated on-call webhook.
 
 ## Локальные команды
 

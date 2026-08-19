@@ -9,9 +9,9 @@ Production must run separate long-lived processes:
 | Scheduler | `php artisan schedule:work` | 1 per deployment |
 | Calls queue | `php artisan queue:work redis --queue=calls --tries=1 --timeout=0` | many |
 | Calls retry queue | `php artisan queue:work redis --queue=calls-retry --tries=1 --timeout=0` | many |
-| Incoming calls consumer | `php artisan calls:kafka:consume incoming-calls --group=calls-incoming --source=incoming-calls-consumer --limit=1000 --timeout-ms=1000` | by partition count |
-| Telephony facts consumer | `php artisan calls:kafka:consume telephony.facts --group=calls-telephony-facts --source=telephony-facts-consumer --limit=1000 --timeout-ms=1000` | by partition count |
-| Outbox publisher | `php artisan calls:telephony-outbox:publish --limit=100` | many |
+| Incoming calls consumer | `php artisan calls:kafka:consume-daemon incoming-calls --group=calls-incoming --source=incoming-calls-consumer --limit=1000 --timeout-ms=1000` | by partition count |
+| Telephony facts consumer | `php artisan calls:kafka:consume-daemon telephony.facts --group=calls-telephony-facts --source=telephony-facts-consumer --limit=1000 --timeout-ms=1000` | by partition count |
+| Outbox publisher | `php artisan calls:telephony-outbox:publish-daemon --limit=100 --interval=1` | many |
 
 Scheduler runs:
 
@@ -23,6 +23,13 @@ Scheduler runs:
 
 If outbox grows faster than scheduler can publish it, run additional standalone
 outbox publishers.
+
+Production process managers must send `SIGTERM` and wait for graceful shutdown.
+The bundled supervisor config uses `stopasgroup=true`, `killasgroup=true`,
+`stopsignal=TERM`, and `stopwaitsecs=30`. Kafka consumer and outbox publisher
+daemon commands stop after the current consume/publish iteration completes.
+Laravel queue workers handle `SIGTERM`; use `php artisan queue:restart` during
+deployments instead of relying on `--stop-when-empty` for long-lived workers.
 
 Important: one HTTP process is not enough. Without scheduler, metrics and stale
 reservations are not updated. Without queue workers, calls are not processed.
@@ -95,6 +102,8 @@ Commands:
 php artisan calls:dead-letter:list
 php artisan calls:dead-letter:list --reason=invalid_payload
 php artisan calls:dead-letter:resolve 123 --note="fixed upstream schema"
+php artisan calls:dead-letter:replay --dry-run --id=123
+php artisan calls:dead-letter:replay --id=123 --note="fixed handler"
 php artisan calls:dead-letter:prune-resolved --older-than-days=30
 ```
 
@@ -106,7 +115,17 @@ When DLQ grows:
 1. Inspect new `reason` values.
 2. Inspect example payload.
 3. Check last deployment and producer.
-4. Do not delete records manually before the failure is understood.
+4. Use `calls:dead-letter:replay --dry-run` before replaying.
+5. Replay only after the failure is understood.
+6. Do not delete records manually before the failure is understood.
+
+Replay is manual and audited. Successful replay marks the DLQ record resolved.
+Failed replay leaves it unresolved and records the attempt in
+`dead_letter_replay_attempts`. Reasons such as `invalid_json`,
+`invalid_payload`, `missing_external_call_id`, `unknown_type`,
+`unsupported_schema_version`, and `contract_violation` are blocked unless
+`--force` is passed. Use `--force` only after inspecting the payload and producer
+contract.
 
 ## Metrics
 
@@ -115,6 +134,18 @@ Endpoint:
 ```text
 GET /metrics
 ```
+
+Production must not expose `/metrics` to the public internet. Restrict it at the
+network level to Prometheus IPs or a private monitoring network. Optional Basic
+Auth can be enabled as a second layer:
+
+```env
+METRICS_BASIC_AUTH_USER=prometheus
+METRICS_BASIC_AUTH_PASSWORD=change-me
+```
+
+If one of these values is set, both must be set and Prometheus must scrape with
+matching credentials.
 
 `/metrics` only renders prepared values. It does not run `COUNT`, `MIN`, or
 grouping over PostgreSQL. Those queries are done by:
@@ -229,14 +260,19 @@ Current rules cover:
 - unresolved or newly increasing DLQ;
 - Kafka messages sent to DLQ by source/topic/reason;
 - Kafka consumer failures by source/topic/reason;
+- high Kafka consumer group lag;
+- high Redis queue depth for `calls` and `calls-retry`;
+- high Kafka/DLQ processing error rate;
+- external exporter scrape failures;
 - failed outbox records;
 - high pending outbox backlog;
 - old pending outbox records;
 - calls waiting too long for an operator.
 
-Current rules do not cover Kafka consumer heartbeat, Kafka broker produce/fetch
-latency, or Redis/container resource thresholds. Add exporter-backed rules or
-managed monitoring alerts before paging on those signals.
+Current rules do not cover explicit Kafka consumer/outbox publisher heartbeat,
+Kafka broker produce/fetch latency, or Redis/container resource thresholds. Add
+application heartbeat metrics, exporter-backed rules, or managed monitoring
+alerts before paging on those signals.
 
 The local AlertManager receiver is intentionally a no-op. Production must route
 alerts to the real incident channel for the environment.

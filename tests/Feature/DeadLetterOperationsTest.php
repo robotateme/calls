@@ -64,17 +64,139 @@ final class DeadLetterOperationsTest extends TestCase
         $this->assertDatabaseHas('dead_letter_messages', ['id' => $unresolved]);
     }
 
-    private function insertDeadLetter(mixed $resolvedAt = null): int
+    public function test_it_previews_dead_letter_replay_without_processing(): void
     {
+        $id = $this->insertDeadLetter(rawPayload: '{"external_call_id":"call-replay-dry","phone":"+15550001001"}');
+
+        $command = $this->artisan('calls:dead-letter:replay', [
+            '--dry-run' => true,
+            '--id' => (string) $id,
+        ]);
+
+        if (! $command instanceof PendingCommand) {
+            $this->fail('Expected a pending artisan command.');
+        }
+
+        $command
+            ->expectsOutputToContain(sprintf('Would replay dead letter %d', $id))
+            ->expectsOutputToContain('dry_run=yes')
+            ->assertSuccessful()
+            ->run();
+
+        $this->assertDatabaseHas('dead_letter_messages', [
+            'id' => $id,
+            'resolved_at' => null,
+        ]);
+        $this->assertDatabaseCount('dead_letter_replay_attempts', 0);
+        $this->assertDatabaseMissing('calls', ['external_call_id' => 'call-replay-dry']);
+    }
+
+    public function test_it_replays_and_resolves_dead_letter_record(): void
+    {
+        $id = $this->insertDeadLetter(
+            reason: 'handler_failed',
+            rawPayload: '{"external_call_id":"call-replay-success","phone":"+15550001001"}',
+            messageKey: 'call-replay-success',
+        );
+
+        $command = $this->artisan('calls:dead-letter:replay', [
+            '--id' => (string) $id,
+            '--note' => 'fixed handler',
+        ]);
+
+        if (! $command instanceof PendingCommand) {
+            $this->fail('Expected a pending artisan command.');
+        }
+
+        $command
+            ->expectsOutputToContain(sprintf('Dead letter %d replayed and resolved.', $id))
+            ->assertSuccessful()
+            ->run();
+
+        $row = DB::table('dead_letter_messages')->where('id', $id)->first();
+
+        $this->assertNotNull($row);
+        $this->assertNotNull($row->resolved_at);
+        $this->assertSame('fixed handler', $row->resolution_note);
+        $this->assertDatabaseHas('dead_letter_replay_attempts', [
+            'dead_letter_message_id' => $id,
+            'successful' => true,
+            'note' => 'fixed handler',
+        ]);
+        $this->assertDatabaseHas('calls', ['external_call_id' => 'call-replay-success']);
+    }
+
+    public function test_it_blocks_unsafe_replay_without_force(): void
+    {
+        $id = $this->insertDeadLetter(reason: 'invalid_json', rawPayload: '{broken');
+
+        $command = $this->artisan('calls:dead-letter:replay', [
+            '--id' => (string) $id,
+        ]);
+
+        if (! $command instanceof PendingCommand) {
+            $this->fail('Expected a pending artisan command.');
+        }
+
+        $command
+            ->expectsOutputToContain('blocked by reason "invalid_json"')
+            ->expectsOutputToContain('blocked=1')
+            ->assertSuccessful()
+            ->run();
+
+        $this->assertDatabaseHas('dead_letter_messages', [
+            'id' => $id,
+            'resolved_at' => null,
+        ]);
+        $this->assertDatabaseCount('dead_letter_replay_attempts', 0);
+    }
+
+    public function test_it_keeps_dead_letter_unresolved_when_forced_replay_fails(): void
+    {
+        $id = $this->insertDeadLetter(reason: 'invalid_json', rawPayload: '{broken');
+
+        $command = $this->artisan('calls:dead-letter:replay', [
+            '--id' => (string) $id,
+            '--force' => true,
+            '--note' => 'manual retry',
+        ]);
+
+        if (! $command instanceof PendingCommand) {
+            $this->fail('Expected a pending artisan command.');
+        }
+
+        $command
+            ->expectsOutputToContain(sprintf('Dead letter %d replay failed: invalid_json', $id))
+            ->assertFailed()
+            ->run();
+
+        $this->assertDatabaseHas('dead_letter_messages', [
+            'id' => $id,
+            'resolved_at' => null,
+        ]);
+        $this->assertDatabaseHas('dead_letter_replay_attempts', [
+            'dead_letter_message_id' => $id,
+            'successful' => false,
+            'note' => 'manual retry',
+            'error' => 'invalid_json',
+        ]);
+    }
+
+    private function insertDeadLetter(
+        mixed $resolvedAt = null,
+        string $reason = 'invalid_payload',
+        string $rawPayload = '{}',
+        ?string $messageKey = null,
+    ): int {
         return (int) DB::table('dead_letter_messages')->insertGetId([
             'source' => 'test-consumer',
             'topic' => 'incoming-calls',
             'message_partition' => 0,
             'message_offset' => random_int(1, 1000000),
-            'message_key' => (string) Str::uuid(),
+            'message_key' => $messageKey ?? (string) Str::uuid(),
             'trace_id' => (string) Str::uuid(),
-            'reason' => 'invalid_payload',
-            'raw_payload' => '{}',
+            'reason' => $reason,
+            'raw_payload' => $rawPayload,
             'decoded_payload' => json_encode([], JSON_THROW_ON_ERROR),
             'message_hash' => (string) Str::uuid(),
             'resolved_at' => $resolvedAt,

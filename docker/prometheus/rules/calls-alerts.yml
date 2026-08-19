@@ -55,6 +55,42 @@ groups:
           summary: Kafka consumer failed
           description: kafka_consumer_failures_total increased during the last 5 minutes. Check consumer logs and Kafka connectivity.
 
+      - alert: CallsKafkaConsumerLagHigh
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 1000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Kafka consumer lag is high
+          description: Kafka consumer group lag is above 1000 for more than 5 minutes. Check consumer health and partition scaling.
+
+      - alert: CallsQueueDepthHigh
+        expr: sum by (queue) (queue_depth{queue=~"calls|calls-retry"}) > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Calls Redis queue depth is high
+          description: Queue depth is above 5000 for more than 5 minutes. Check queue workers and retry growth.
+
+      - alert: CallsProcessingErrorRateHigh
+        expr: ((sum(rate(kafka_consumer_dlq_total[5m])) + sum(rate(kafka_consumer_failures_total[5m]))) / clamp_min(sum(rate(calls_received_total[5m])) + sum(rate(kafka_consumer_dlq_total[5m])), 1)) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Calls processing error rate is high
+          description: Kafka DLQ and consumer failure rate is above 5 percent over 5 minutes.
+
+      - alert: CallsExternalMetricsTargetDown
+        expr: up{job=~"kafka|redis|containers"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: External metrics target is down
+          description: Prometheus cannot scrape one of the external metrics exporters used by the Calls dashboard.
+
       - alert: CallsOutboxFailedRecordsPresent
         expr: sum(telephony_outbox_current{status="failed"}) > 0
         for: 1m

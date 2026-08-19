@@ -41,6 +41,22 @@ admin / admin
 These credentials are for local development only. Override them with
 `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` when needed.
 
+## Metrics Access
+
+Production must restrict `/metrics` at the network level so only Prometheus can
+reach it, for example through a private service, security group, ingress
+allowlist, or Kubernetes `ClusterIP`.
+
+Calls also supports optional Basic Auth as a second layer:
+
+```env
+METRICS_BASIC_AUTH_USER=prometheus
+METRICS_BASIC_AUTH_PASSWORD=change-me
+```
+
+If either variable is configured, both must be present and match the Prometheus
+scrape request. Local development can leave both values empty.
+
 ## Data Flow
 
 ```text
@@ -118,6 +134,14 @@ Current rules:
   source, topic, and reason.
 - `CallsKafkaConsumerFailures`: Kafka consumer boundary failed by source, topic,
   and reason.
+- `CallsKafkaConsumerLagHigh`: Kafka consumer group lag is above the local
+  threshold.
+- `CallsQueueDepthHigh`: Redis queue depth for `calls` or `calls-retry` is
+  above the local threshold.
+- `CallsProcessingErrorRateHigh`: Kafka DLQ and consumer failure rate is above
+  the local percentage threshold.
+- `CallsExternalMetricsTargetDown`: Prometheus cannot scrape one of the local
+  exporter targets used by Grafana.
 - `CallsOutboxFailedRecordsPresent`: failed outbox records exist.
 - `CallsOutboxPendingHigh`: pending outbox backlog is above the local threshold.
 - `CallsOutboxOldestPendingTooOld`: oldest pending outbox record is older than
@@ -128,9 +152,15 @@ Thresholds in local rules are starting values, not production SLOs. Tune them
 per environment before using them for paging.
 
 The local stack covers Kafka lag, Redis queue depth, Redis memory, and container
-CPU/memory in Grafana. It still does not cover Kafka consumer heartbeat or
-Kafka broker produce/fetch latency as explicit service SLOs. Add Kafka broker
-metrics or managed Kafka monitoring before paging on those signals.
+CPU/memory in Grafana. It still does not emit explicit heartbeat metrics from
+Kafka consumers or the outbox publisher, and it does not cover Kafka broker
+produce/fetch latency as explicit service SLOs. Add application heartbeat
+metrics, Kafka broker metrics, or managed Kafka monitoring before paging on
+those signals.
+
+The local AlertManager receiver is intentionally a no-op. Production must mount
+an environment-specific AlertManager configuration with a real incident receiver
+such as PagerDuty, Opsgenie, or a dedicated on-call webhook.
 
 ## Local Commands
 

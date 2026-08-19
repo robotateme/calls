@@ -48,6 +48,10 @@ final readonly class HandleKafkaCallFactHandler
             ]);
         } catch (InvalidKafkaCallFact $exception) {
             $this->sendToDlq($command, $exception->reason, $exception->decodedPayload);
+
+            if ($command->throwOnDlq) {
+                throw $exception;
+            }
         } catch (Throwable $exception) {
             $this->sendToDlq($command, 'handler_failed', null);
 
@@ -56,6 +60,10 @@ final readonly class HandleKafkaCallFactHandler
                 'topic' => $command->topic,
                 'reason' => 'handler_failed',
             ]);
+
+            if ($command->throwOnDlq) {
+                throw $exception;
+            }
         } finally {
             $this->metrics->timing('kafka_consumer.message_duration_ms', (microtime(true) - $startedAt) * 1000, [
                 'source' => $command->source,

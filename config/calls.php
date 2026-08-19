@@ -23,6 +23,8 @@ return [
     'operator_search_retry_max_delay_seconds' => (int) env('OPERATOR_SEARCH_RETRY_MAX_DELAY_SECONDS', 3600),
     'metrics_cache_store' => env('METRICS_CACHE_STORE'),
     'metrics_cache_prefix' => env('METRICS_CACHE_PREFIX', 'prometheus_metrics'),
+    'metrics_basic_auth_user' => env('METRICS_BASIC_AUTH_USER'),
+    'metrics_basic_auth_password' => env('METRICS_BASIC_AUTH_PASSWORD'),
     'dead_letter_retention_days' => (int) env('DEAD_LETTER_RETENTION_DAYS', 30),
     'dead_letter_prune_limit' => (int) env('DEAD_LETTER_PRUNE_LIMIT', 1000),
 ];

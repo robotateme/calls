@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\GracefulShutdown;
 use Application\Calls\Commands\ConsumeKafkaCallFactsCommand;
 use Application\Calls\Commands\ConsumeKafkaCallFactsHandler;
 use Application\Calls\Commands\HandleKafkaCallFactCommand;
@@ -74,6 +75,45 @@ Artisan::command('calls:telephony-outbox:publish
 
     return Command::SUCCESS;
 })->purpose('Publish pending Telephony outbox commands');
+
+Artisan::command('calls:telephony-outbox:publish-daemon
+    {--limit= : Maximum records to publish per iteration}
+    {--retry-delay= : Seconds before retrying failed records}
+    {--max-attempts= : Attempts before marking a record failed}
+    {--interval= : Seconds to sleep between iterations}', function (PublishTelephonyOutboxHandler $handler) use ($optionalConsoleInt, $positiveConsoleInt): int {
+    $configuredLimit = (int) config('calls.outbox_publish_limit');
+    $configuredRetryDelaySeconds = (int) config('calls.outbox_retry_delay_seconds');
+    $configuredMaxAttempts = (int) config('calls.outbox_max_attempts');
+    $publishLimit = $positiveConsoleInt($optionalConsoleInt($this->option('limit'), 'limit', $configuredLimit) ?? $configuredLimit);
+    $retryDelaySeconds = $positiveConsoleInt($optionalConsoleInt($this->option('retry-delay'), 'retry-delay', $configuredRetryDelaySeconds) ?? $configuredRetryDelaySeconds);
+    $maxAttempts = $positiveConsoleInt($optionalConsoleInt($this->option('max-attempts'), 'max-attempts', $configuredMaxAttempts) ?? $configuredMaxAttempts);
+    $intervalSeconds = $positiveConsoleInt($optionalConsoleInt($this->option('interval'), 'interval', 1) ?? 1);
+    $shutdown = new GracefulShutdown;
+
+    $shutdown->installSignalHandlers();
+    $this->info('Telephony outbox publisher daemon started.');
+
+    while (! $shutdown->requested()) {
+        $result = $handler->handle(
+            limit: $publishLimit,
+            retryDelaySeconds: $retryDelaySeconds,
+            maxAttempts: $maxAttempts,
+        );
+
+        $this->info(sprintf(
+            'Telephony outbox: claimed=%d published=%d failed=%d',
+            $result->claimed,
+            $result->published,
+            $result->failed,
+        ));
+
+        $shutdown->sleepInterruptibly($intervalSeconds);
+    }
+
+    $this->info('Telephony outbox publisher daemon stopped.');
+
+    return Command::SUCCESS;
+})->purpose('Continuously publish pending Telephony outbox commands until SIGTERM or SIGINT');
 
 Artisan::command('calls:telephony-outbox:requeue-stale
     {--older-than= : Processing age in seconds before requeue}
@@ -179,6 +219,51 @@ Artisan::command('calls:kafka:consume
     return Command::SUCCESS;
 })->purpose('Consume Kafka call facts through the configured transport adapter');
 
+Artisan::command('calls:kafka:consume-daemon
+    {topic : Kafka topic}
+    {--group=calls : Consumer group id}
+    {--source=calls-jsonl-consumer : Consumer source name}
+    {--limit=100 : Maximum records to consume per iteration}
+    {--timeout-ms=1000 : Idle timeout in milliseconds}', function (ConsumeKafkaCallFactsHandler $handler, Metrics $metrics) use ($requireConsoleString, $optionalConsoleString, $optionalConsoleInt, $positiveConsoleInt): int {
+    $topic = $requireConsoleString($this->argument('topic'), 'topic', 'Argument');
+    $groupId = $optionalConsoleString($this->option('group'), 'group', 'calls') ?? 'calls';
+    $source = $optionalConsoleString($this->option('source'), 'source', 'calls-jsonl-consumer') ?? 'calls-jsonl-consumer';
+    $consumeLimit = $positiveConsoleInt($optionalConsoleInt($this->option('limit'), 'limit', 100) ?? 100);
+    $consumeTimeoutMs = $positiveConsoleInt($optionalConsoleInt($this->option('timeout-ms'), 'timeout-ms', 1000) ?? 1000);
+    $shutdown = new GracefulShutdown;
+
+    $shutdown->installSignalHandlers();
+    $this->info(sprintf('Kafka consumer daemon started for topic: %s', $topic));
+
+    while (! $shutdown->requested()) {
+        try {
+            $consumed = $handler->handle(new ConsumeKafkaCallFactsCommand(
+                topic: $topic,
+                groupId: $groupId,
+                source: $source,
+                limit: $consumeLimit,
+                timeoutMs: $consumeTimeoutMs,
+            ));
+        } catch (Throwable $exception) {
+            $metrics->increment('kafka_consumer_failures_total', tags: [
+                'source' => $source,
+                'topic' => $topic,
+                'reason' => 'consumer_failed',
+            ]);
+
+            $this->error(sprintf('Kafka consumer failed: %s', $exception->getMessage()));
+
+            return Command::FAILURE;
+        }
+
+        $this->info(sprintf('Kafka consumer processed records: %d', $consumed));
+    }
+
+    $this->info(sprintf('Kafka consumer daemon stopped for topic: %s', $topic));
+
+    return Command::SUCCESS;
+})->purpose('Continuously consume Kafka call facts until SIGTERM or SIGINT');
+
 Artisan::command('calls:dead-letter:list
     {--reason= : Filter by reason}
     {--include-resolved : Include resolved records}
@@ -242,6 +327,167 @@ Artisan::command('calls:dead-letter:resolve
 
     return Command::SUCCESS;
 })->purpose('Mark dead letter record as resolved');
+
+Artisan::command('calls:dead-letter:replay
+    {--dry-run : Preview records without processing}
+    {--id= : Replay one dead letter primary key}
+    {--hash= : Replay one dead letter message_hash}
+    {--topic= : Filter by topic}
+    {--limit=50 : Maximum records to replay}
+    {--note= : Audit note for successful replay}
+    {--force : Allow replay of records with blocked contract/format reasons}', function (HandleKafkaCallFactHandler $handler) use ($optionalConsoleString, $optionalConsoleInt, $positiveConsoleInt): int {
+    if (! Schema::hasTable('dead_letter_messages')) {
+        $this->warn('dead_letter_messages table does not exist.');
+
+        return Command::SUCCESS;
+    }
+
+    if (! Schema::hasTable('dead_letter_replay_attempts')) {
+        $this->warn('dead_letter_replay_attempts table does not exist.');
+
+        return Command::FAILURE;
+    }
+
+    $blockedReasons = [
+        'contract_violation',
+        'invalid_json',
+        'invalid_payload',
+        'missing_external_call_id',
+        'unknown_type',
+        'unsupported_schema_version',
+    ];
+    $dryRun = $this->option('dry-run') === true;
+    $force = $this->option('force') === true;
+    $deadLetterId = $optionalConsoleInt($this->option('id'), 'id');
+    $messageHash = $optionalConsoleString($this->option('hash'), 'hash');
+    $topic = $optionalConsoleString($this->option('topic'), 'topic');
+    $limit = $positiveConsoleInt($optionalConsoleInt($this->option('limit'), 'limit', 50) ?? 50);
+    $note = $optionalConsoleString($this->option('note'), 'note');
+    $query = DB::table('dead_letter_messages')
+        ->select([
+            'id',
+            'source',
+            'topic',
+            'message_partition',
+            'message_offset',
+            'message_key',
+            'trace_id',
+            'reason',
+            'raw_payload',
+            'message_hash',
+        ])
+        ->whereNull('resolved_at')
+        ->orderBy('id')
+        ->limit($limit);
+
+    if ($deadLetterId !== null) {
+        $query->where('id', $deadLetterId);
+    }
+
+    if ($messageHash !== null) {
+        $query->where('message_hash', $messageHash);
+    }
+
+    if ($topic !== null) {
+        $query->where('topic', $topic);
+    }
+
+    $records = $query->get();
+
+    if ($records->isEmpty()) {
+        $this->info('Dead letter replay records matched: 0');
+
+        return Command::SUCCESS;
+    }
+
+    $failed = 0;
+    $replayed = 0;
+    $blocked = 0;
+
+    foreach ($records as $record) {
+        $reason = (string) $record->reason;
+
+        if ($dryRun) {
+            $this->line(sprintf(
+                'Would replay dead letter %d topic=%s reason=%s hash=%s',
+                (int) $record->id,
+                (string) $record->topic,
+                $reason,
+                (string) $record->message_hash,
+            ));
+
+            continue;
+        }
+
+        if (! $force && in_array($reason, $blockedReasons, true)) {
+            $blocked++;
+            $this->warn(sprintf(
+                'Dead letter %d blocked by reason "%s"; use --force only after inspecting the payload.',
+                (int) $record->id,
+                $reason,
+            ));
+
+            continue;
+        }
+
+        try {
+            $handler->handle(new HandleKafkaCallFactCommand(
+                source: (string) $record->source,
+                topic: (string) $record->topic,
+                partition: $record->message_partition === null ? null : (int) $record->message_partition,
+                offset: $record->message_offset === null ? null : (int) $record->message_offset,
+                messageKey: $record->message_key === null ? null : (string) $record->message_key,
+                traceId: $record->trace_id === null ? null : (string) $record->trace_id,
+                rawPayload: (string) $record->raw_payload,
+                throwOnDlq: true,
+            ));
+
+            DB::table('dead_letter_replay_attempts')->insert([
+                'dead_letter_message_id' => (int) $record->id,
+                'successful' => true,
+                'note' => $note,
+                'error' => null,
+                'created_at' => now(),
+            ]);
+            DB::table('dead_letter_messages')
+                ->where('id', (int) $record->id)
+                ->whereNull('resolved_at')
+                ->update([
+                    'resolved_at' => now(),
+                    'resolution_note' => $note ?? 'replayed successfully',
+                ]);
+
+            $replayed++;
+            $this->info(sprintf('Dead letter %d replayed and resolved.', (int) $record->id));
+        } catch (Throwable $exception) {
+            DB::table('dead_letter_replay_attempts')->insert([
+                'dead_letter_message_id' => (int) $record->id,
+                'successful' => false,
+                'note' => $note,
+                'error' => mb_substr($exception->getMessage(), 0, 4000),
+                'created_at' => now(),
+            ]);
+
+            $failed++;
+            $this->error(sprintf(
+                'Dead letter %d replay failed: %s',
+                (int) $record->id,
+                $exception->getMessage(),
+            ));
+        }
+    }
+
+    $this->info(sprintf(
+        'Dead letter replay summary: matched=%d replayed=%d failed=%d blocked=%d dry_run=%s',
+        $records->count(),
+        $replayed,
+        $failed,
+        $blocked,
+        $dryRun ? 'yes' : 'no',
+    ));
+
+    return $failed > 0 ? Command::FAILURE : Command::SUCCESS;
+})->purpose('Replay unresolved dead letter records manually with audit logging');
 
 Artisan::command('calls:dead-letter:prune-resolved
     {--older-than-days= : Resolved records retention in days}

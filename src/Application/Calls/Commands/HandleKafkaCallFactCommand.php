@@ -14,5 +14,6 @@ final readonly class HandleKafkaCallFactCommand
         public ?string $messageKey,
         public ?string $traceId,
         public string $rawPayload,
+        public bool $throwOnDlq = false,
     ) {}
 }
