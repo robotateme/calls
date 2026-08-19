@@ -39,7 +39,9 @@ Laravel-сервис, который обрабатывает входящий �
    mapper-ы восстанавливают доменную модель из БД.
 5. [ADR](docs/ru/adr/README.md) - почему выбраны Kafka, слои, бронь, locks и
    snapshot метрик.
-6. [Production](docs/ru/production.md) - какие процессы должны работать постоянно.
+6. [Observability](docs/ru/observability.md) - Prometheus, Grafana, поток метрик
+   и smoke checks.
+7. [Production](docs/ru/production.md) - какие процессы должны работать постоянно.
 
 ## Документы
 
@@ -49,6 +51,7 @@ Laravel-сервис, который обрабатывает входящий �
 - [Kafka](docs/ru/kafka-contracts.md)
 - [ADR](docs/ru/adr/README.md)
 - [Диаграммы](docs/ru/diagrams.md)
+- [Observability](docs/ru/observability.md)
 - [Production](docs/ru/production.md)
 - [Нагрузка](docs/ru/load-testing.md)
 
@@ -86,6 +89,8 @@ Laravel-сервис, который обрабатывает входящий �
 - Kafka: `kafka:9092` внутри Docker, `localhost:9094` с хоста
 - Kafka UI: `http://localhost:8081`
 - Prometheus: `http://localhost:9090`
+- AlertManager: `http://localhost:9093`
+- Grafana: `http://localhost:3000`
 
 ```bash
 cp .env.example .env
@@ -127,7 +132,14 @@ make metrics-snapshot
 make prometheus-ready
 make prometheus-targets
 make prometheus-query QUERY='up{job="calls"}'
+make prometheus-rules
+make prometheus-alerts
 make prometheus-smoke
+make alertmanager
+make alertmanager-ready
+make alertmanager-alerts
+make grafana
+make grafana-ready
 make kafka-consume TOPIC=incoming-calls
 make load-jsonl COUNT=1000
 make dead-letter-list
@@ -156,7 +168,7 @@ KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 Рабочий Docker-образ должен содержать `php-rdkafka`. Без расширения `rdkafka`-режим
 падает сразу.
 
-## Метрики и Prometheus
+## Метрики, Prometheus, AlertManager и Grafana
 
 Endpoint:
 
@@ -170,10 +182,26 @@ GET /metrics
 http://laravel.test/metrics
 ```
 
+Локальная Grafana открывается здесь:
+
+```text
+http://localhost:3000
+```
+
+Логин по умолчанию для локального запуска: `admin` / `admin`. Grafana уже
+получает Prometheus datasource и dashboard `Calls Overview`.
+
+Локальный AlertManager открывается здесь:
+
+```text
+http://localhost:9093
+```
+
 Проверить обязательные series:
 
 ```bash
 make prometheus-smoke
 ```
 
-Полный список метрик и PromQL smoke queries: [docs/ru/production.md](docs/ru/production.md).
+Полный observability flow, Grafana provisioning, список метрик и PromQL smoke
+queries: [docs/ru/observability.md](docs/ru/observability.md).

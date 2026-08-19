@@ -38,7 +38,9 @@ What it does not do:
    persistence mapping.
 5. [ADR](docs/en/adr/README.md) - why Kafka, layers, reservations, locks, and
    metrics snapshots were chosen.
-6. [Production](docs/en/production.md) - required long-running processes.
+6. [Observability](docs/en/observability.md) - Prometheus, Grafana, metrics
+   flow, and smoke checks.
+7. [Production](docs/en/production.md) - required long-running processes.
 
 ## Documents
 
@@ -48,6 +50,7 @@ What it does not do:
 - [Kafka](docs/en/kafka-contracts.md)
 - [ADR](docs/en/adr/README.md)
 - [Diagrams](docs/en/diagrams.md)
+- [Observability](docs/en/observability.md)
 - [Production](docs/en/production.md)
 - [Load Testing](docs/en/load-testing.md)
 
@@ -84,6 +87,8 @@ Docker services:
 - Kafka: `kafka:9092` in Docker, `localhost:9094` from host
 - Kafka UI: `http://localhost:8081`
 - Prometheus: `http://localhost:9090`
+- AlertManager: `http://localhost:9093`
+- Grafana: `http://localhost:3000`
 
 ```bash
 cp .env.example .env
@@ -124,7 +129,14 @@ make metrics-snapshot
 make prometheus-ready
 make prometheus-targets
 make prometheus-query QUERY='up{job="calls"}'
+make prometheus-rules
+make prometheus-alerts
 make prometheus-smoke
+make alertmanager
+make alertmanager-ready
+make alertmanager-alerts
+make grafana
+make grafana-ready
 make kafka-consume TOPIC=incoming-calls
 make load-jsonl COUNT=1000
 make dead-letter-list
@@ -152,7 +164,7 @@ KAFKA_PRODUCER_FLUSH_TIMEOUT_MS=10000
 
 The runtime image must contain `php-rdkafka` before `rdkafka` mode is enabled.
 
-## Metrics and Prometheus
+## Metrics, Prometheus, AlertManager, and Grafana
 
 Endpoint:
 
@@ -166,11 +178,26 @@ Local Prometheus scrapes:
 http://laravel.test/metrics
 ```
 
+Local Grafana opens at:
+
+```text
+http://localhost:3000
+```
+
+Default local login is `admin` / `admin`. Grafana is provisioned with the
+Prometheus datasource and the `Calls Overview` dashboard.
+
+Local AlertManager opens at:
+
+```text
+http://localhost:9093
+```
+
 Check required series:
 
 ```bash
 make prometheus-smoke
 ```
 
-Full metric list and PromQL smoke queries:
-[docs/en/production.md](docs/en/production.md).
+Full observability flow, Grafana provisioning, metric list, and PromQL smoke
+queries: [docs/en/observability.md](docs/en/observability.md).

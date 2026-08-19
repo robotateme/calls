@@ -10,5 +10,6 @@
 - [Kafka](kafka-contracts.md)
 - [ADR](adr/README.md)
 - [Diagrams](diagrams.md)
+- [Observability](observability.md)
 - [Production](production.md)
 - [Load Testing](load-testing.md)

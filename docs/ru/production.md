@@ -133,6 +133,9 @@ php artisan calls:metrics:snapshot
 - `operator_reservation_attempts_total{result}`;
 - `telephony_outbox_publish_total{result}`;
 - `dead_letter_messages_total{reason}`;
+- `dead_letter_records_total{source,topic,reason,result}`;
+- `kafka_consumer_dlq_total{source,topic,reason}`;
+- `kafka_consumer_failures_total{source,topic,reason}`;
 - `calls_current{status}`;
 - `operators_reserved_current`;
 - `telephony_outbox_current{status}`;
@@ -160,6 +163,8 @@ sum by (from, to) (rate(call_transitions_total[5m]))
 sum by (result) (rate(operator_reservation_attempts_total[5m]))
 sum by (result) (rate(telephony_outbox_publish_total[5m]))
 sum by (reason) (rate(dead_letter_messages_total[5m]))
+sum by (source, topic, reason) (rate(kafka_consumer_dlq_total[5m]))
+sum by (source, topic, reason) (rate(kafka_consumer_failures_total[5m]))
 sum by (status) (calls_current)
 operators_reserved_current
 sum by (status) (telephony_outbox_current)
@@ -168,9 +173,63 @@ oldest_waiting_call_age_seconds
 oldest_outbox_message_age_seconds
 ```
 
+Grafana локально настроена как dashboard-слой поверх Prometheus:
+
+- локальный URL: `http://localhost:3000`;
+- локальный логин по умолчанию: `admin` / `admin`;
+- datasource: `Prometheus` -> `http://prometheus:9090`;
+- dashboard: `Calls Overview`.
+
+Grafana не должна ходить напрямую в рабочие таблицы PostgreSQL за этими
+service-метриками. Значения метрик Calls по-прежнему пишут handlers и
+`calls:metrics:snapshot`, Prometheus читает их из `/metrics`, а Grafana читает
+их из Prometheus.
+
+Подробная настройка локального observability:
+[observability.md](observability.md).
+
 Если `up{job="calls"}` равен 0, Prometheus не видит `/metrics`. Если gauges не
 меняются, проверьте `calls:metrics:snapshot` и scheduler. Если counters не
 растут при тестовых событиях, проверьте обработчики и Redis queue.
+
+## Alerting
+
+Локальный Prometheus отправляет alerts в AlertManager:
+
+```text
+http://alertmanager:9093
+```
+
+Локальный UI AlertManager:
+
+```text
+http://localhost:9093
+```
+
+Alert rules лежат здесь:
+
+```text
+docker/prometheus/rules/calls-alerts.yml
+```
+
+Текущие rules покрывают:
+
+- отказ scrape `/metrics`;
+- отсутствие snapshot gauges;
+- unresolved или растущий DLQ;
+- Kafka-сообщения, отправленные в DLQ, по source/topic/reason;
+- отказы Kafka consumer по source/topic/reason;
+- failed outbox records;
+- высокий pending outbox backlog;
+- старые pending outbox records;
+- звонки, которые слишком долго ждут оператора.
+
+Текущие rules не покрывают Redis queue depth, Kafka consumer heartbeat и CPU /
+memory контейнеров. Для этих сигналов нужны Redis/Kafka/container exporters или
+новые application metrics.
+
+Локальный receiver AlertManager намеренно no-op. В production alerts надо
+направить в реальный incident channel окружения.
 
 ## Deploy
 

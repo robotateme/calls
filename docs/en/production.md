@@ -133,6 +133,9 @@ Calls metrics:
 - `operator_reservation_attempts_total{result}`;
 - `telephony_outbox_publish_total{result}`;
 - `dead_letter_messages_total{reason}`;
+- `dead_letter_records_total{source,topic,reason,result}`;
+- `kafka_consumer_dlq_total{source,topic,reason}`;
+- `kafka_consumer_failures_total{source,topic,reason}`;
 - `calls_current{status}`;
 - `operators_reserved_current`;
 - `telephony_outbox_current{status}`;
@@ -160,6 +163,8 @@ sum by (from, to) (rate(call_transitions_total[5m]))
 sum by (result) (rate(operator_reservation_attempts_total[5m]))
 sum by (result) (rate(telephony_outbox_publish_total[5m]))
 sum by (reason) (rate(dead_letter_messages_total[5m]))
+sum by (source, topic, reason) (rate(kafka_consumer_dlq_total[5m]))
+sum by (source, topic, reason) (rate(kafka_consumer_failures_total[5m]))
 sum by (status) (calls_current)
 operators_reserved_current
 sum by (status) (telephony_outbox_current)
@@ -168,9 +173,62 @@ oldest_waiting_call_age_seconds
 oldest_outbox_message_age_seconds
 ```
 
+Grafana is local/provisioned as a dashboard layer over Prometheus:
+
+- local URL: `http://localhost:3000`;
+- default local login: `admin` / `admin`;
+- datasource: `Prometheus` -> `http://prometheus:9090`;
+- dashboard: `Calls Overview`.
+
+Grafana must not query PostgreSQL working tables directly for these service
+metrics. Calls metric values are still produced by handlers and
+`calls:metrics:snapshot`, scraped by Prometheus from `/metrics`, and then read by
+Grafana from Prometheus.
+
+Detailed local observability setup: [observability.md](observability.md).
+
 If `up{job="calls"}` is 0, Prometheus cannot scrape `/metrics`. If gauges do not
 change, check `calls:metrics:snapshot` and scheduler. If counters do not grow
 on test events, check handlers and Redis queue.
+
+## Alerting
+
+Local Prometheus sends alerts to AlertManager:
+
+```text
+http://alertmanager:9093
+```
+
+Local AlertManager UI:
+
+```text
+http://localhost:9093
+```
+
+Alert rules live in:
+
+```text
+docker/prometheus/rules/calls-alerts.yml
+```
+
+Current rules cover:
+
+- `/metrics` scrape failure;
+- missing snapshot gauges;
+- unresolved or newly increasing DLQ;
+- Kafka messages sent to DLQ by source/topic/reason;
+- Kafka consumer failures by source/topic/reason;
+- failed outbox records;
+- high pending outbox backlog;
+- old pending outbox records;
+- calls waiting too long for an operator.
+
+Current rules do not cover Redis queue depth, Kafka consumer heartbeat, or
+container CPU/memory. Add Redis/Kafka/container exporters or application metrics
+before paging on those signals.
+
+The local AlertManager receiver is intentionally a no-op. Production must route
+alerts to the real incident channel for the environment.
 
 ## Deploy
 
