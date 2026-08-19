@@ -109,6 +109,7 @@ services:
             - '${FORWARD_PROMETHEUS_PORT:-9090}:9090'
         volumes:
             - './docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro'
+            - './docker/prometheus/rules:/etc/prometheus/rules:ro'
             - 'sail-prometheus:/prometheus'
         command:
             - '--config.file=/etc/prometheus/prometheus.yml'
@@ -118,6 +119,39 @@ services:
             - sail
         depends_on:
             laravel.test:
+                condition: service_started
+
+    alertmanager:
+        image: 'prom/alertmanager:v0.29.0'
+        ports:
+            - '${FORWARD_ALERTMANAGER_PORT:-9093}:9093'
+        volumes:
+            - './docker/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro'
+            - 'sail-alertmanager:/alertmanager'
+        command:
+            - '--config.file=/etc/alertmanager/alertmanager.yml'
+            - '--storage.path=/alertmanager'
+        networks:
+            - sail
+
+    grafana:
+        image: 'grafana/grafana:latest'
+        ports:
+            - '${FORWARD_GRAFANA_PORT:-3000}:3000'
+        environment:
+            GF_SECURITY_ADMIN_USER: '${GRAFANA_ADMIN_USER:-admin}'
+            GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_ADMIN_PASSWORD:-admin}'
+            GF_USERS_DEFAULT_THEME: light
+        volumes:
+            - 'sail-grafana:/var/lib/grafana'
+            - './docker/grafana/provisioning:/etc/grafana/provisioning:ro'
+            - './docker/grafana/dashboards:/var/lib/grafana/dashboards:ro'
+        networks:
+            - sail
+        depends_on:
+            prometheus:
+                condition: service_started
+            alertmanager:
                 condition: service_started
 
 networks:
@@ -132,4 +166,8 @@ volumes:
     sail-kafka:
         driver: local
     sail-prometheus:
+        driver: local
+    sail-alertmanager:
+        driver: local
+    sail-grafana:
         driver: local

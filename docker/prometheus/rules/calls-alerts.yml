@@ -1,0 +1,92 @@
+groups:
+  - name: calls.rules
+    rules:
+      - alert: CallsMetricsTargetDown
+        expr: up{job="calls"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Calls metrics target is down
+          description: Prometheus cannot scrape /metrics from Calls for more than 1 minute.
+
+      - alert: CallsMetricsSeriesMissing
+        expr: absent(calls_current)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Calls snapshot metrics are missing
+          description: The calls_current gauge is absent. Check calls:metrics:snapshot and scheduler.
+
+      - alert: CallsDeadLettersPresent
+        expr: dead_letter_current > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Calls DLQ has unresolved messages
+          description: dead_letter_current is above zero. Inspect dead_letter_messages before replay or deletion.
+
+      - alert: CallsDeadLettersIncreasing
+        expr: increase(dead_letter_messages_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Calls DLQ received new messages
+          description: dead_letter_messages_total increased during the last 5 minutes.
+
+      - alert: CallsKafkaMessagesSentToDlq
+        expr: increase(kafka_consumer_dlq_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Kafka messages are being sent to DLQ
+          description: kafka_consumer_dlq_total increased during the last 5 minutes. Inspect labels source, topic, and reason.
+
+      - alert: CallsKafkaConsumerFailures
+        expr: increase(kafka_consumer_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Kafka consumer failed
+          description: kafka_consumer_failures_total increased during the last 5 minutes. Check consumer logs and Kafka connectivity.
+
+      - alert: CallsOutboxFailedRecordsPresent
+        expr: sum(telephony_outbox_current{status="failed"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Telephony outbox has failed records
+          description: Failed outbox records require inspection before recovery. Do not delete them manually.
+
+      - alert: CallsOutboxPendingHigh
+        expr: sum(telephony_outbox_current{status="pending"}) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Telephony outbox pending backlog is high
+          description: More than 100 pending Telephony outbox records exist for 5 minutes.
+
+      - alert: CallsOutboxOldestPendingTooOld
+        expr: oldest_outbox_message_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Oldest Telephony outbox message is too old
+          description: The oldest pending outbox message is older than 5 minutes.
+
+      - alert: CallsWaitingTooLong
+        expr: oldest_waiting_call_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Calls are waiting too long for operators
+          description: The oldest waiting call is older than 5 minutes.
