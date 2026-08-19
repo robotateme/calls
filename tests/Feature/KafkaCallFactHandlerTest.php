@@ -149,6 +149,11 @@ final class KafkaCallFactHandlerTest extends TestCase
             'topic' => 'telephony.facts',
             'reason' => 'unsupported_schema_version',
         ]], $metrics->counters);
+        $this->assertContains(['kafka_consumer_dlq_total', 1, [
+            'source' => 'telephony-facts-consumer',
+            'topic' => 'telephony.facts',
+            'reason' => 'unsupported_schema_version',
+        ]], $metrics->counters);
     }
 
     public function test_it_records_invalid_message_to_dlq_with_trace_id(): void
@@ -182,6 +187,11 @@ final class KafkaCallFactHandlerTest extends TestCase
             'reason' => 'unknown_type',
         ]);
         $this->assertContains(['kafka_consumer.message_dlq', 1, [
+            'source' => 'telephony-facts-consumer',
+            'topic' => 'telephony.facts',
+            'reason' => 'unknown_type',
+        ]], $metrics->counters);
+        $this->assertContains(['kafka_consumer_dlq_total', 1, [
             'source' => 'telephony-facts-consumer',
             'topic' => 'telephony.facts',
             'reason' => 'unknown_type',

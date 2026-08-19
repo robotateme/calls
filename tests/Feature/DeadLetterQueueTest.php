@@ -73,10 +73,22 @@ final class DeadLetterQueueTest extends TestCase
             'reason' => 'invalid_payload',
             'result' => 'inserted',
         ]], $metrics->counters);
+        $this->assertContains(['dead_letter_records_total', 1, [
+            'source' => 'incoming-calls-consumer',
+            'topic' => 'incoming-calls',
+            'reason' => 'invalid_payload',
+            'result' => 'inserted',
+        ]], $metrics->counters);
         $this->assertContains(['dead_letter_messages_total', 1, [
             'reason' => 'invalid_payload',
         ]], $metrics->counters);
         $this->assertContains(['dead_letter.recorded', 1, [
+            'source' => 'incoming-calls-consumer',
+            'topic' => 'incoming-calls',
+            'reason' => 'invalid_payload',
+            'result' => 'duplicate',
+        ]], $metrics->counters);
+        $this->assertContains(['dead_letter_records_total', 1, [
             'source' => 'incoming-calls-consumer',
             'topic' => 'incoming-calls',
             'reason' => 'invalid_payload',
@@ -112,6 +124,12 @@ final class DeadLetterQueueTest extends TestCase
         $this->assertNull($row->decoded_payload);
         $this->assertNotEmpty($row->message_hash);
         $this->assertContains(['dead_letter.recorded', 1, [
+            'source' => 'telephony-facts-consumer',
+            'topic' => 'telephony.facts',
+            'reason' => 'handler_failed',
+            'result' => 'inserted',
+        ]], $metrics->counters);
+        $this->assertContains(['dead_letter_records_total', 1, [
             'source' => 'telephony-facts-consumer',
             'topic' => 'telephony.facts',
             'reason' => 'handler_failed',

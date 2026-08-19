@@ -8,6 +8,7 @@ use App\Models\Call;
 use Application\Calls\Ports\CallProcessingQueue;
 use Application\Shared\Ports\KafkaConsumer;
 use Application\Shared\Ports\KafkaConsumerMessage;
+use Application\Shared\Ports\Metrics;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Testing\PendingCommand;
 use Tests\TestCase;
@@ -62,6 +63,8 @@ final class KafkaConsumeCommandTest extends TestCase
 
     public function test_it_returns_failure_when_consumer_transport_throws(): void
     {
+        $metrics = new KafkaConsumeMetrics;
+        $this->app->instance(Metrics::class, $metrics);
         $this->app->instance(KafkaConsumer::class, new FailingKafkaConsumer('Kafka transport unavailable'));
 
         $command = $this->artisan('calls:kafka:consume', [
@@ -80,6 +83,12 @@ final class KafkaConsumeCommandTest extends TestCase
             ->expectsOutputToContain('Kafka consumer failed: Kafka transport unavailable')
             ->assertFailed()
             ->run();
+
+        $this->assertContains(['kafka_consumer_failures_total', 1, [
+            'source' => 'fake-consumer',
+            'topic' => 'incoming-calls',
+            'reason' => 'consumer_failed',
+        ]], $metrics->counters);
     }
 }
 
@@ -140,4 +149,21 @@ final class KafkaConsumeCallProcessingQueue implements CallProcessingQueue
     {
         $this->callIds[] = $callId;
     }
+}
+
+final class KafkaConsumeMetrics implements Metrics
+{
+    /**
+     * @var list<array{0: string, 1: int, 2: array<string, int|string>}>
+     */
+    public array $counters = [];
+
+    public function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        $this->counters[] = [$name, $value, $tags];
+    }
+
+    public function gauge(string $name, int|float $value, array $tags = []): void {}
+
+    public function timing(string $name, int|float $milliseconds, array $tags = []): void {}
 }

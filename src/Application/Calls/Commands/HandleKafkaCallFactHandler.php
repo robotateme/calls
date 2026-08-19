@@ -337,6 +337,11 @@ final readonly class HandleKafkaCallFactHandler
             'topic' => $command->topic,
             'reason' => $reason,
         ]);
+        $this->metrics->increment('kafka_consumer_dlq_total', tags: [
+            'source' => $command->source,
+            'topic' => $command->topic,
+            'reason' => $reason,
+        ]);
     }
 }
 

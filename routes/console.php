@@ -147,7 +147,7 @@ Artisan::command('calls:kafka:consume
     {--group=calls : Consumer group id}
     {--source=calls-jsonl-consumer : Consumer source name}
     {--limit=100 : Maximum records to consume}
-    {--timeout-ms=1000 : Idle timeout in milliseconds}', function (ConsumeKafkaCallFactsHandler $handler) use ($requireConsoleString, $optionalConsoleString, $optionalConsoleInt, $positiveConsoleInt): int {
+    {--timeout-ms=1000 : Idle timeout in milliseconds}', function (ConsumeKafkaCallFactsHandler $handler, Metrics $metrics) use ($requireConsoleString, $optionalConsoleString, $optionalConsoleInt, $positiveConsoleInt): int {
     $topic = $requireConsoleString($this->argument('topic'), 'topic', 'Argument');
     $groupId = $optionalConsoleString($this->option('group'), 'group', 'calls') ?? 'calls';
     $source = $optionalConsoleString($this->option('source'), 'source', 'calls-jsonl-consumer') ?? 'calls-jsonl-consumer';
@@ -163,6 +163,12 @@ Artisan::command('calls:kafka:consume
             timeoutMs: $consumeTimeoutMs,
         ));
     } catch (Throwable $exception) {
+        $metrics->increment('kafka_consumer_failures_total', tags: [
+            'source' => $source,
+            'topic' => $topic,
+            'reason' => 'consumer_failed',
+        ]);
+
         $this->error(sprintf('Kafka consumer failed: %s', $exception->getMessage()));
 
         return Command::FAILURE;
